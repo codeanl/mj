@@ -1,0 +1,15 @@
+{
+  "name": "nova-creator-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @nova/web dev",
+    "dev:admin": "pnpm --filter @nova/admin dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
