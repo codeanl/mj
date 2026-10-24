@@ -18,15 +18,23 @@ type Repository struct {
 	pool *pgxpool.Pool
 }
 
+type rowScanner interface {
+	Scan(...interface{}) error
+}
+
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-func (repository *Repository) CreateImage(ctx context.Context, userID, prompt, model string) (Task, error) {
+func (repository *Repository) CreateImage(ctx context.Context, userID, prompt string, options ImageOptions) (Task, error) {
 	taskID := uuid.NewString()
 	assetID := uuid.NewString()
 	title := truncateRunes(prompt, 80)
-	parameters, err := json.Marshal(map[string]interface{}{"size": ImageSize, "quality": ImageQuality, "width": ImageWidth, "height": ImageHeight})
+	parameters, err := json.Marshal(map[string]interface{}{
+		"size": options.Ratio, "quality": options.Resolution,
+		"providerSize": options.ProviderSize, "providerQuality": options.ProviderQuality,
+		"width": options.Width, "height": options.Height,
+	})
 	if err != nil {
 		return Task{}, err
 	}
@@ -40,18 +48,19 @@ func (repository *Repository) CreateImage(ctx context.Context, userID, prompt, m
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO media_assets (id, user_id, kind, source, status, title, size_bytes, width, height)
 		VALUES ($1, $2, 'image', 'generated', 'generating', $3, 0, $4, $5)
-	`, assetID, userID, title, ImageWidth, ImageHeight); err != nil {
+	`, assetID, userID, title, options.Width, options.Height); err != nil {
 		return Task{}, err
 	}
 	row := tx.QueryRow(ctx, `
 		INSERT INTO generation_tasks (id, user_id, asset_id, kind, status, provider, model, prompt, parameters)
 		VALUES ($1, $2, $3, 'image', 'queued', 'openai-compatible', $4, $5, $6::jsonb)
 		RETURNING id::text, asset_id::text, kind, status, model, prompt,
-		          (parameters->>'width')::integer, (parameters->>'height')::integer, parameters->>'quality', created_at
-	`, taskID, userID, assetID, model, prompt, parameters)
+		          parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
+		          parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality', created_at
+	`, taskID, userID, assetID, options.Model, prompt, parameters)
 
 	var task Task
-	if err := row.Scan(&task.ID, &task.AssetID, &task.Kind, &task.Status, &task.Model, &task.Prompt, &task.Width, &task.Height, &task.Quality, &task.CreatedAt); err != nil {
+	if err := scanTask(row, &task, false); err != nil {
 		return Task{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -63,13 +72,14 @@ func (repository *Repository) CreateImage(ctx context.Context, userID, prompt, m
 func (repository *Repository) Get(ctx context.Context, userID, taskID string) (Task, error) {
 	row := repository.pool.QueryRow(ctx, `
 		SELECT id::text, asset_id::text, kind, status, model, prompt,
-		       (parameters->>'width')::integer, (parameters->>'height')::integer, parameters->>'quality',
+		       parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
+		       parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality',
 		       coalesce(error_message, ''), created_at
 		FROM generation_tasks
 		WHERE id = $1 AND user_id = $2
 	`, taskID, userID)
 	var task Task
-	if err := row.Scan(&task.ID, &task.AssetID, &task.Kind, &task.Status, &task.Model, &task.Prompt, &task.Width, &task.Height, &task.Quality, &task.ErrorMessage, &task.CreatedAt); err != nil {
+	if err := scanTask(row, &task, true); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Task{}, ErrTaskNotFound
 		}
@@ -96,7 +106,8 @@ func (repository *Repository) ClaimNext(ctx context.Context) (Task, bool, error)
 
 	row := tx.QueryRow(ctx, `
 		SELECT id::text, asset_id::text, kind, status, model, prompt,
-		       (parameters->>'width')::integer, (parameters->>'height')::integer, parameters->>'quality', created_at
+		       parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
+		       parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality', created_at
 		FROM generation_tasks
 		WHERE status = 'queued'
 		ORDER BY created_at ASC
@@ -104,7 +115,7 @@ func (repository *Repository) ClaimNext(ctx context.Context) (Task, bool, error)
 		FOR UPDATE SKIP LOCKED
 	`)
 	var task Task
-	if err := row.Scan(&task.ID, &task.AssetID, &task.Kind, &task.Status, &task.Model, &task.Prompt, &task.Width, &task.Height, &task.Quality, &task.CreatedAt); err != nil {
+	if err := scanTask(row, &task, false); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Task{}, false, nil
 		}
@@ -118,6 +129,18 @@ func (repository *Repository) ClaimNext(ctx context.Context) (Task, bool, error)
 	}
 	task.Status = TaskRunning
 	return task, true, nil
+}
+
+func scanTask(row rowScanner, task *Task, withError bool) error {
+	values := []interface{}{
+		&task.ID, &task.AssetID, &task.Kind, &task.Status, &task.Model, &task.Prompt,
+		&task.Size, &task.Width, &task.Height, &task.Quality, &task.providerSize, &task.providerQuality,
+	}
+	if withError {
+		values = append(values, &task.ErrorMessage)
+	}
+	values = append(values, &task.CreatedAt)
+	return row.Scan(values...)
 }
 
 func (repository *Repository) Complete(ctx context.Context, task Task, asset CompletedAsset) error {

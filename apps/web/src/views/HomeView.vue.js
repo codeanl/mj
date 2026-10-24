@@ -16,8 +16,14 @@ const defaultCapabilities = {
     image: {
         enabled: true,
         models: [{ value: "gpt-image-2", label: "gpt-image-2" }],
-        sizes: [{ value: "2048x1152", label: "16:9", width: 2048, height: 1152 }],
-        qualities: [{ value: "high", label: "2K" }],
+        sizes: [
+            { value: "1:1", label: "1:1", width: 2048, height: 2048 },
+            { value: "16:9", label: "16:9", width: 2048, height: 1152 },
+            { value: "9:16", label: "9:16", width: 1152, height: 2048 },
+            { value: "4:3", label: "4:3", width: 2048, height: 1536 },
+            { value: "3:4", label: "3:4", width: 1536, height: 2048 },
+        ],
+        qualities: [{ value: "1K", label: "1K" }, { value: "2K", label: "2K" }],
     },
     video: { enabled: false, models: [], sizes: [], qualities: [] },
 };
@@ -25,8 +31,8 @@ const activeType = ref("image");
 const prompt = ref("");
 const capabilities = ref(defaultCapabilities);
 const selectedModel = ref("gpt-image-2");
-const selectedSize = ref("2048x1152");
-const selectedQuality = ref("high");
+const selectedSize = ref("16:9");
+const selectedQuality = ref("2K");
 const darkMode = ref(false);
 const creating = ref(false);
 const recentLoading = ref(true);
@@ -57,7 +63,12 @@ async function startCreation() {
         return;
     creating.value = true;
     try {
-        const task = await createImageGeneration(prompt.value.trim());
+        const task = await createImageGeneration({
+            prompt: prompt.value.trim(),
+            model: selectedModel.value,
+            size: selectedSize.value,
+            quality: selectedQuality.value,
+        });
         ElMessage.success(`生成任务已创建：${task.taskId.slice(0, 8)}`);
         await router.push("/assets");
     }
@@ -327,13 +338,13 @@ elSelect;
 // @ts-ignore
 const __VLS_27 = __VLS_asFunctionalComponent1(__VLS_26, new __VLS_26({
     // @ts-ignore
-    modelValue: (__VLS_unwrap(selectedModel, {})), ...{ class: "compact-select" }, 'aria-label': "模型", disabled: (!currentCapability.value?.enabled),
+    modelValue: (__VLS_unwrap(selectedModel, {})), ...{ class: "compact-select" }, 'aria-label': "模型", disabled: true,
 }));
 const __VLS_28 = __VLS_27({
     modelValue: (__VLS_unwrap(selectedModel, {})),
     ...{ class: "compact-select" },
     'aria-label': "模型",
-    disabled: (!currentCapability.value?.enabled),
+    disabled: true,
 }, ...__VLS_functionalComponentArgsRest(__VLS_27));
 /** @type {__VLS_StyleScopedClasses['compact-select']} */ ;
 const { default: __VLS_31 } = __VLS_nonNull(__VLS_29.slots);
@@ -353,7 +364,7 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_32))) {
         value: (option.value),
     }, ...__VLS_functionalComponentArgsRest(__VLS_34));
     // @ts-ignore
-    [prompt, promptPlaceholder, selectedModel, currentCapability, currentCapability,];
+    [prompt, promptPlaceholder, selectedModel, currentCapability,];
 }
 // @ts-ignore
 [];
@@ -402,12 +413,12 @@ elSelect;
 // @ts-ignore
 const __VLS_51 = __VLS_asFunctionalComponent1(__VLS_50, new __VLS_50({
     // @ts-ignore
-    modelValue: (__VLS_unwrap(selectedQuality, {})), ...{ class: "compact-select compact-select--small" }, 'aria-label': "生成质量", disabled: (!currentCapability.value?.enabled),
+    modelValue: (__VLS_unwrap(selectedQuality, {})), ...{ class: "compact-select compact-select--small" }, 'aria-label': "分辨率", disabled: (!currentCapability.value?.enabled),
 }));
 const __VLS_52 = __VLS_51({
     modelValue: (__VLS_unwrap(selectedQuality, {})),
     ...{ class: "compact-select compact-select--small" },
-    'aria-label': "生成质量",
+    'aria-label': "分辨率",
     disabled: (!currentCapability.value?.enabled),
 }, ...__VLS_functionalComponentArgsRest(__VLS_51));
 /** @type {__VLS_StyleScopedClasses['compact-select']} */ ;

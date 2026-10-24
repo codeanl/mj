@@ -7,6 +7,7 @@ export type GenerationTask = {
   status: "queued" | "running" | "succeeded" | "failed"
   model: string
   prompt: string
+  size: string
   width: number
   height: number
   quality: string
@@ -41,8 +42,8 @@ export async function getGenerationCapabilities() {
   return response.data.data
 }
 
-export async function createImageGeneration(prompt: string) {
-  const response = await http.post<ApiResponse<GenerationTask>>("/generations/images", { prompt })
+export async function createImageGeneration(input: { prompt: string; model: string; size: string; quality: string }) {
+  const response = await http.post<ApiResponse<GenerationTask>>("/generations/images", input)
   return response.data.data
 }
 

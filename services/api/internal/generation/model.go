@@ -12,24 +12,36 @@ const (
 )
 
 const (
-	ImageWidth   = 2048
-	ImageHeight  = 1152
-	ImageSize    = "2048x1152"
-	ImageQuality = "high"
+	DefaultImageRatio      = "16:9"
+	DefaultImageResolution = "2K"
+	ProviderImageQuality   = "high"
 )
 
 type Task struct {
-	ID           string     `json:"taskId"`
-	AssetID      string     `json:"assetId"`
-	Kind         string     `json:"type"`
-	Status       TaskStatus `json:"status"`
-	Model        string     `json:"model"`
-	Prompt       string     `json:"prompt"`
-	Width        int        `json:"width"`
-	Height       int        `json:"height"`
-	Quality      string     `json:"quality"`
-	ErrorMessage string     `json:"errorMessage,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
+	ID              string     `json:"taskId"`
+	AssetID         string     `json:"assetId"`
+	Kind            string     `json:"type"`
+	Status          TaskStatus `json:"status"`
+	Model           string     `json:"model"`
+	Prompt          string     `json:"prompt"`
+	Size            string     `json:"size"`
+	Width           int        `json:"width"`
+	Height          int        `json:"height"`
+	Quality         string     `json:"quality"`
+	ErrorMessage    string     `json:"errorMessage,omitempty"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	providerSize    string
+	providerQuality string
+}
+
+type ImageOptions struct {
+	Model           string
+	Ratio           string
+	Resolution      string
+	ProviderSize    string
+	ProviderQuality string
+	Width           int
+	Height          int
 }
 
 type CreateImageInput struct {

@@ -82,8 +82,8 @@ func (worker *Worker) process(ctx context.Context, task Task) {
 		worker.fail(ctx, task, fmt.Errorf("generated image decode failed: %w", err))
 		return
 	}
-	if imageConfig.Width != ImageWidth || imageConfig.Height != ImageHeight {
-		worker.fail(ctx, task, fmt.Errorf("generated image dimensions %dx%d do not match requested %dx%d", imageConfig.Width, imageConfig.Height, ImageWidth, ImageHeight))
+	if imageConfig.Width != task.Width || imageConfig.Height != task.Height {
+		worker.fail(ctx, task, fmt.Errorf("generated image dimensions %dx%d do not match requested %dx%d", imageConfig.Width, imageConfig.Height, task.Width, task.Height))
 		return
 	}
 	storageKey := task.AssetID + extension

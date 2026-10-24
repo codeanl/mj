@@ -70,7 +70,7 @@ func (handlers generationHandlers) writeGenerationError(w http.ResponseWriter, e
 	case errors.Is(err, generation.ErrInvalidPrompt):
 		writeJSON(w, http.StatusBadRequest, response{Code: 40022, Msg: "提示词长度应为 2-2000 个字符"})
 	case errors.Is(err, generation.ErrUnsupportedOptions):
-		writeJSON(w, http.StatusBadRequest, response{Code: 40023, Msg: "所选模型或生成参数不受当前渠道支持，请刷新后重试"})
+		writeJSON(w, http.StatusBadRequest, response{Code: 40023, Msg: "所选模型、画面比例或分辨率不受支持"})
 	case errors.Is(err, generation.ErrProviderUnavailable):
 		writeJSON(w, http.StatusServiceUnavailable, response{Code: 50311, Msg: "图片生成渠道尚未配置"})
 	case errors.Is(err, generation.ErrTaskNotFound):

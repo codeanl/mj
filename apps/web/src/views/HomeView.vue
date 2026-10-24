@@ -35,8 +35,14 @@ const defaultCapabilities: GenerationCapabilities = {
   image: {
     enabled: true,
     models: [{ value: "gpt-image-2", label: "gpt-image-2" }],
-    sizes: [{ value: "2048x1152", label: "16:9", width: 2048, height: 1152 }],
-    qualities: [{ value: "high", label: "2K" }],
+    sizes: [
+      { value: "1:1", label: "1:1", width: 2048, height: 2048 },
+      { value: "16:9", label: "16:9", width: 2048, height: 1152 },
+      { value: "9:16", label: "9:16", width: 1152, height: 2048 },
+      { value: "4:3", label: "4:3", width: 2048, height: 1536 },
+      { value: "3:4", label: "3:4", width: 1536, height: 2048 },
+    ],
+    qualities: [{ value: "1K", label: "1K" }, { value: "2K", label: "2K" }],
   },
   video: { enabled: false, models: [], sizes: [], qualities: [] },
 }
@@ -45,8 +51,8 @@ const activeType = ref("image")
 const prompt = ref("")
 const capabilities = ref<GenerationCapabilities>(defaultCapabilities)
 const selectedModel = ref("gpt-image-2")
-const selectedSize = ref("2048x1152")
-const selectedQuality = ref("high")
+const selectedSize = ref("16:9")
+const selectedQuality = ref("2K")
 const darkMode = ref(false)
 const creating = ref(false)
 const recentLoading = ref(true)
@@ -80,7 +86,12 @@ async function startCreation() {
   if (creating.value) return
   creating.value = true
   try {
-    const task = await createImageGeneration(prompt.value.trim())
+    const task = await createImageGeneration({
+      prompt: prompt.value.trim(),
+      model: selectedModel.value,
+      size: selectedSize.value,
+      quality: selectedQuality.value,
+    })
     ElMessage.success(`生成任务已创建：${task.taskId.slice(0, 8)}`)
     await router.push("/assets")
   } catch (error) {
@@ -195,13 +206,13 @@ onBeforeUnmount(revokeRecentPreviewUrls)
             <textarea v-model="prompt" :placeholder="promptPlaceholder" rows="3" maxlength="1000" />
             <div class="composer__options">
               <div class="composer__selects">
-                <el-select v-model="selectedModel" class="compact-select" aria-label="模型" :disabled="!currentCapability?.enabled">
+                <el-select v-model="selectedModel" class="compact-select" aria-label="模型" disabled>
                   <el-option v-for="option in currentCapability?.models || []" :key="option.value" :label="option.label" :value="option.value" />
                 </el-select>
                 <el-select v-model="selectedSize" class="compact-select compact-select--small" aria-label="画面比例" :disabled="!currentCapability?.enabled">
                   <el-option v-for="option in currentCapability?.sizes || []" :key="option.value" :label="option.label" :value="option.value" />
                 </el-select>
-                <el-select v-model="selectedQuality" class="compact-select compact-select--small" aria-label="生成质量" :disabled="!currentCapability?.enabled">
+                <el-select v-model="selectedQuality" class="compact-select compact-select--small" aria-label="分辨率" :disabled="!currentCapability?.enabled">
                   <el-option v-for="option in currentCapability?.qualities || []" :key="option.value" :label="option.label" :value="option.value" />
                 </el-select>
               </div>

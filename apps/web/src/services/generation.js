@@ -3,8 +3,8 @@ export async function getGenerationCapabilities() {
     const response = await http.get("/generations/capabilities");
     return response.data.data;
 }
-export async function createImageGeneration(prompt) {
-    const response = await http.post("/generations/images", { prompt });
+export async function createImageGeneration(input) {
+    const response = await http.post("/generations/images", input);
     return response.data.data;
 }
 export async function getGenerationTask(taskId) {

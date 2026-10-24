@@ -54,8 +54,8 @@ func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task) (G
 		"model":   task.Model,
 		"prompt":  task.Prompt,
 		"n":       1,
-		"size":    ImageSize,
-		"quality": ImageQuality,
+		"size":    task.providerSize,
+		"quality": task.providerQuality,
 	})
 	if err != nil {
 		return GeneratedImage{}, err
