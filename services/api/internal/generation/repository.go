@@ -52,12 +52,12 @@ func (repository *Repository) CreateImage(ctx context.Context, userID, prompt st
 		return Task{}, err
 	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO generation_tasks (id, user_id, asset_id, kind, status, provider, model, prompt, parameters)
-		VALUES ($1, $2, $3, 'image', 'queued', 'openai-compatible', $4, $5, $6::jsonb)
-		RETURNING id::text, asset_id::text, kind, status, model, prompt,
+		INSERT INTO generation_tasks (id, user_id, asset_id, channel_id, kind, status, provider, model, prompt, parameters)
+		VALUES ($1, $2, $3, $4, 'image', 'queued', 'openai-compatible', $5, $6, $7::jsonb)
+		RETURNING id::text, asset_id::text, channel_id::text, kind, status, model, prompt,
 		          parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
 		          parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality', created_at
-	`, taskID, userID, assetID, options.Model, prompt, parameters)
+	`, taskID, userID, assetID, options.ChannelID, options.Model, prompt, parameters)
 
 	var task Task
 	if err := scanTask(row, &task, false); err != nil {
@@ -71,7 +71,7 @@ func (repository *Repository) CreateImage(ctx context.Context, userID, prompt st
 
 func (repository *Repository) Get(ctx context.Context, userID, taskID string) (Task, error) {
 	row := repository.pool.QueryRow(ctx, `
-		SELECT id::text, asset_id::text, kind, status, model, prompt,
+		SELECT id::text, asset_id::text, channel_id::text, kind, status, model, prompt,
 		       parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
 		       parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality',
 		       coalesce(error_message, ''), created_at
@@ -105,7 +105,7 @@ func (repository *Repository) ClaimNext(ctx context.Context) (Task, bool, error)
 	defer tx.Rollback(ctx)
 
 	row := tx.QueryRow(ctx, `
-		SELECT id::text, asset_id::text, kind, status, model, prompt,
+		SELECT id::text, asset_id::text, channel_id::text, kind, status, model, prompt,
 		       parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
 		       parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality', created_at
 		FROM generation_tasks
@@ -133,7 +133,7 @@ func (repository *Repository) ClaimNext(ctx context.Context) (Task, bool, error)
 
 func scanTask(row rowScanner, task *Task, withError bool) error {
 	values := []interface{}{
-		&task.ID, &task.AssetID, &task.Kind, &task.Status, &task.Model, &task.Prompt,
+		&task.ID, &task.AssetID, &task.ChannelID, &task.Kind, &task.Status, &task.Model, &task.Prompt,
 		&task.Size, &task.Width, &task.Height, &task.Quality, &task.providerSize, &task.providerQuality,
 	}
 	if withError {

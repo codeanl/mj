@@ -13,26 +13,24 @@ import (
 	"time"
 
 	"nova-creator-platform/services/api/internal/assets"
+	"nova-creator-platform/services/api/internal/modelchannels"
 )
 
 type Worker struct {
 	repository *Repository
 	provider   ImageProvider
+	channels   *modelchannels.Service
 	storage    *assets.LocalStorage
 	logger     *slog.Logger
 	interval   time.Duration
 	stale      time.Duration
 }
 
-func NewWorker(repository *Repository, provider ImageProvider, storage *assets.LocalStorage, logger *slog.Logger, interval, stale time.Duration) *Worker {
-	return &Worker{repository: repository, provider: provider, storage: storage, logger: logger, interval: interval, stale: stale}
+func NewWorker(repository *Repository, provider ImageProvider, channels *modelchannels.Service, storage *assets.LocalStorage, logger *slog.Logger, interval, stale time.Duration) *Worker {
+	return &Worker{repository: repository, provider: provider, channels: channels, storage: storage, logger: logger, interval: interval, stale: stale}
 }
 
 func (worker *Worker) Run(ctx context.Context) {
-	if !worker.provider.Available() {
-		worker.logger.Warn("generation worker disabled because image channel is not configured")
-		return
-	}
 	worker.logger.Info("generation worker started", "interval", worker.interval.String())
 	worker.runAvailable(ctx)
 	ticker := time.NewTicker(worker.interval)
@@ -67,7 +65,12 @@ func (worker *Worker) runAvailable(ctx context.Context) {
 }
 
 func (worker *Worker) process(ctx context.Context, task Task) {
-	generated, err := worker.provider.Generate(ctx, task)
+	selected, err := worker.channels.ResolveImageModel(ctx, task.ChannelID, task.Model)
+	if err != nil {
+		worker.fail(ctx, task, fmt.Errorf("generation channel unavailable: %w", err))
+		return
+	}
+	generated, err := worker.provider.Generate(ctx, task, selected)
 	if err != nil {
 		worker.fail(ctx, task, err)
 		return

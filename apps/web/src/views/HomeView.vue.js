@@ -6,6 +6,7 @@ import { useAuthStore } from "@/stores/auth";
 import * as assetApi from "@/services/assets";
 import { createImageGeneration, } from "@/services/generation";
 import { apiErrorMessage } from "@/services/http";
+import { listImageModels } from "@/services/models";
 const authStore = useAuthStore();
 const router = useRouter();
 const creationTypes = [
@@ -15,7 +16,7 @@ const creationTypes = [
 const defaultCapabilities = {
     image: {
         enabled: true,
-        models: [{ value: "gpt-image-2", label: "gpt-image-2" }],
+        models: [],
         sizes: [
             { value: "1:1", label: "1:1", width: 2048, height: 2048 },
             { value: "16:9", label: "16:9", width: 2048, height: 1152 },
@@ -30,11 +31,12 @@ const defaultCapabilities = {
 const activeType = ref("image");
 const prompt = ref("");
 const capabilities = ref(defaultCapabilities);
-const selectedModel = ref("gpt-image-2");
+const selectedModel = ref("");
 const selectedSize = ref("16:9");
 const selectedQuality = ref("2K");
 const darkMode = ref(false);
 const creating = ref(false);
+const modelsLoading = ref(true);
 const recentLoading = ref(true);
 const recentWorks = ref([]);
 const recentPreviewUrls = ref({});
@@ -57,6 +59,10 @@ async function startCreation() {
     }
     if (activeType.value === "video") {
         ElMessage.info("当前后端暂未配置视频生成渠道");
+        return;
+    }
+    if (!selectedModel.value) {
+        ElMessage.warning("当前没有可用的图片模型，请联系管理员配置模型渠道");
         return;
     }
     if (creating.value)
@@ -114,6 +120,23 @@ async function loadRecentWorks() {
         recentLoading.value = false;
     }
 }
+async function loadModels() {
+    modelsLoading.value = true;
+    try {
+        const models = await listImageModels();
+        capabilities.value.image.models = models.map((model) => ({ value: model.id, label: model.displayName }));
+        if (!models.some((model) => model.id === selectedModel.value))
+            selectedModel.value = models[0]?.id || "";
+    }
+    catch (error) {
+        capabilities.value.image.models = [];
+        selectedModel.value = "";
+        ElMessage.error(apiErrorMessage(error, "图片模型加载失败"));
+    }
+    finally {
+        modelsLoading.value = false;
+    }
+}
 function revokeRecentPreviewUrls() {
     Object.values(recentPreviewUrls.value).forEach((url) => url && URL.revokeObjectURL(url));
     recentPreviewUrls.value = {};
@@ -131,7 +154,7 @@ function recentMeta(work) {
     return work.width > 0 && work.height > 0 ? `${work.width}×${work.height}` : "已完成";
 }
 onMounted(() => {
-    void loadRecentWorks();
+    void Promise.all([loadModels(), loadRecentWorks()]);
 });
 onBeforeUnmount(revokeRecentPreviewUrls);
 const __VLS_ctx = {};
@@ -146,9 +169,13 @@ __VLS_withDotValue(authStore, {});
 // @ts-ignore
 __VLS_withDotValue(activeType, {});
 // @ts-ignore
+__VLS_withDotValue(modelsLoading, {});
+// @ts-ignore
 __VLS_withDotValue(currentCapability, {});
 // @ts-ignore
 __VLS_withDotValue(creating, {});
+// @ts-ignore
+__VLS_withDotValue(selectedModel, {});
 // @ts-ignore
 __VLS_withDotValue(router, {});
 // @ts-ignore
@@ -338,13 +365,14 @@ elSelect;
 // @ts-ignore
 const __VLS_27 = __VLS_asFunctionalComponent1(__VLS_26, new __VLS_26({
     // @ts-ignore
-    modelValue: (__VLS_unwrap(selectedModel, {})), ...{ class: "compact-select" }, 'aria-label': "模型", disabled: true,
+    modelValue: (selectedModel.value), ...{ class: "compact-select" }, 'aria-label': "模型", loading: (modelsLoading.value), placeholder: (modelsLoading.value ? '加载模型' : '暂无模型'),
 }));
 const __VLS_28 = __VLS_27({
-    modelValue: (__VLS_unwrap(selectedModel, {})),
+    modelValue: (selectedModel.value),
     ...{ class: "compact-select" },
     'aria-label': "模型",
-    disabled: true,
+    loading: (modelsLoading.value),
+    placeholder: (modelsLoading.value ? '加载模型' : '暂无模型'),
 }, ...__VLS_functionalComponentArgsRest(__VLS_27));
 /** @type {__VLS_StyleScopedClasses['compact-select']} */ ;
 const { default: __VLS_31 } = __VLS_nonNull(__VLS_29.slots);
@@ -364,7 +392,7 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_32))) {
         value: (option.value),
     }, ...__VLS_functionalComponentArgsRest(__VLS_34));
     // @ts-ignore
-    [prompt, promptPlaceholder, selectedModel, currentCapability,];
+    [prompt, promptPlaceholder, selectedModel, modelsLoading, modelsLoading, currentCapability,];
 }
 // @ts-ignore
 [];
@@ -449,7 +477,7 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: (startCreation) },
     ...{ class: "create-button" },
     type: "button",
-    disabled: (creating.value),
+    disabled: (creating.value || modelsLoading.value || !selectedModel.value),
 });
 /** @type {__VLS_StyleScopedClasses['create-button']} */ ;
 if (creating.value) {
@@ -533,7 +561,7 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
             void $event;
             return (router.value.push('/assets'));
             // @ts-ignore
-            [creating, creating, creating, router,];
+            [selectedModel, modelsLoading, creating, creating, creating, router,];
         } },
     type: "button",
 });

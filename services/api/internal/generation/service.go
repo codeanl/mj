@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"unicode/utf8"
+
+	"nova-creator-platform/services/api/internal/modelchannels"
 )
 
 var ErrInvalidPrompt = errors.New("invalid generation prompt")
@@ -12,12 +14,11 @@ var ErrUnsupportedOptions = errors.New("unsupported generation options")
 
 type Service struct {
 	repository *Repository
-	provider   ImageProvider
-	imageModel string
+	channels   *modelchannels.Service
 }
 
-func NewService(repository *Repository, provider ImageProvider, imageModel string) *Service {
-	return &Service{repository: repository, provider: provider, imageModel: imageModel}
+func NewService(repository *Repository, channels *modelchannels.Service) *Service {
+	return &Service{repository: repository, channels: channels}
 }
 
 func (service *Service) CreateImage(ctx context.Context, input CreateImageInput) (Task, error) {
@@ -25,13 +26,18 @@ func (service *Service) CreateImage(ctx context.Context, input CreateImageInput)
 	if input.UserID == "" || utf8.RuneCountInString(prompt) < 2 || utf8.RuneCountInString(prompt) > 2000 {
 		return Task{}, ErrInvalidPrompt
 	}
-	if !service.provider.Available() {
-		return Task{}, ErrProviderUnavailable
+	selected, err := service.channels.ResolveImageModel(ctx, "", input.Model)
+	if err != nil {
+		if errors.Is(err, modelchannels.ErrChannelDisabled) {
+			return Task{}, ErrProviderUnavailable
+		}
+		return Task{}, err
 	}
-	options, ok := resolveImageOptions(input, service.imageModel)
+	options, ok := resolveImageOptions(input, selected.UpstreamModel)
 	if !ok {
 		return Task{}, ErrUnsupportedOptions
 	}
+	options.ChannelID = selected.ChannelID
 	return service.repository.CreateImage(ctx, input.UserID, prompt, options)
 }
 
@@ -82,11 +88,19 @@ var imageDimensions = map[string]map[string]struct {
 	},
 }
 
-func (service *Service) Capabilities() Capabilities {
+func (service *Service) Capabilities(ctx context.Context) (Capabilities, error) {
+	publicModels, err := service.channels.PublicModels(ctx)
+	if err != nil {
+		return Capabilities{}, err
+	}
+	models := make([]Option, 0, len(publicModels))
+	for _, model := range publicModels {
+		models = append(models, Option{Value: model.ID, Label: model.DisplayName})
+	}
 	return Capabilities{
 		Image: GenerationCapability{
-			Enabled: service.provider.Available(),
-			Models:  []Option{{Value: service.imageModel, Label: service.imageModel}},
+			Enabled: len(models) > 0,
+			Models:  models,
 			Sizes: []ImageSizeOption{
 				{Value: "1:1", Label: "1:1", Width: 2048, Height: 2048},
 				{Value: "16:9", Label: "16:9", Width: 2048, Height: 1152},
@@ -97,7 +111,7 @@ func (service *Service) Capabilities() Capabilities {
 			Qualities: []Option{{Value: "1K", Label: "1K"}, {Value: "2K", Label: "2K"}},
 		},
 		Video: GenerationCapability{Enabled: false, Models: []Option{}, Sizes: []ImageSizeOption{}, Qualities: []Option{}},
-	}
+	}, nil
 }
 
 func (service *Service) Get(ctx context.Context, userID, taskID string) (Task, error) {

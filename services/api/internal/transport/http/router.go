@@ -16,6 +16,7 @@ import (
 	"nova-creator-platform/services/api/internal/auth"
 	"nova-creator-platform/services/api/internal/config"
 	"nova-creator-platform/services/api/internal/generation"
+	"nova-creator-platform/services/api/internal/modelchannels"
 )
 
 func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, redisClient *redis.Client) http.Handler {
@@ -26,11 +27,21 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 		panic(err)
 	}
 	assetHTTP := newAssetHandlers(assets.NewService(assets.NewPostgresRepository(db), assetStorage), logger, cfg.AssetMaxBytes)
+	channelRepository := modelchannels.NewRepository(db)
+	channelService := modelchannels.NewService(channelRepository, modelchannels.NewSecretCipher(cfg.JWTSecret), cfg.GenerationTimeout)
+	if db != nil {
+		if err := channelService.EnsureDefault(runtimeContext, cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.ImageModel); err != nil {
+			panic(err)
+		}
+	}
+	channelHTTP := newModelChannelHandlers(channelService, logger)
 	generationRepository := generation.NewRepository(db)
-	imageProvider := generation.NewOpenAIImageProvider(cfg.OpenAIBaseURL, cfg.OpenAIAPIKey, cfg.GenerationTimeout, cfg.AssetMaxBytes)
-	generationService := generation.NewService(generationRepository, imageProvider, cfg.ImageModel)
+	imageProvider := generation.NewOpenAIImageProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
+	generationService := generation.NewService(generationRepository, channelService)
 	generationHTTP := newGenerationHandlers(generationService, logger)
-	go generation.NewWorker(generationRepository, imageProvider, assetStorage, logger, cfg.WorkerInterval, cfg.TaskStale).Run(runtimeContext)
+	if db != nil {
+		go generation.NewWorker(generationRepository, imageProvider, channelService, assetStorage, logger, cfg.WorkerInterval, cfg.TaskStale).Run(runtimeContext)
+	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
@@ -62,9 +73,23 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Get("/assets", assetHTTP.List)
 			protected.Post("/assets", assetHTTP.Upload)
 			protected.Get("/assets/{id}/content", assetHTTP.Content)
+			protected.Get("/models", channelHTTP.PublicModels)
 			protected.Get("/generations/capabilities", generationHTTP.GetCapabilities)
 			protected.Post("/generations/images", generationHTTP.CreateImage)
 			protected.Get("/generations/{id}", generationHTTP.GetTask)
+
+			protected.Group(func(admin chi.Router) {
+				admin.Use(authHTTP.RequireAdmin)
+				admin.Get("/admin/channels", channelHTTP.List)
+				admin.Post("/admin/channels", channelHTTP.Create)
+				admin.Patch("/admin/channels/{channelId}", channelHTTP.Update)
+				admin.Delete("/admin/channels/{channelId}", channelHTTP.Delete)
+				admin.Post("/admin/channels/{channelId}/test", channelHTTP.Test)
+				admin.Post("/admin/channels/{channelId}/models/sync", channelHTTP.SyncModels)
+				admin.Post("/admin/channels/{channelId}/models", channelHTTP.CreateModel)
+				admin.Patch("/admin/channels/{channelId}/models/{modelId}", channelHTTP.UpdateModel)
+				admin.Delete("/admin/channels/{channelId}/models/{modelId}", channelHTTP.DeleteModel)
+			})
 		})
 	})
 

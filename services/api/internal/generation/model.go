@@ -20,6 +20,7 @@ const (
 type Task struct {
 	ID              string     `json:"taskId"`
 	AssetID         string     `json:"assetId"`
+	ChannelID       string     `json:"channelId"`
 	Kind            string     `json:"type"`
 	Status          TaskStatus `json:"status"`
 	Model           string     `json:"model"`
@@ -35,6 +36,7 @@ type Task struct {
 }
 
 type ImageOptions struct {
+	ChannelID       string
 	Model           string
 	Ratio           string
 	Resolution      string

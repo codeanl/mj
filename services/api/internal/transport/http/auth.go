@@ -74,6 +74,17 @@ func (handlers authHandlers) RequireAuth(next http.Handler) http.Handler {
 	})
 }
 
+func (handlers authHandlers) RequireAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := currentUser(r.Context())
+		if !ok || user.Role != "admin" {
+			writeJSON(w, http.StatusForbidden, response{Code: 40302, Msg: "需要管理员权限"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (handlers authHandlers) writeAuthError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, auth.ErrInvalidInput):

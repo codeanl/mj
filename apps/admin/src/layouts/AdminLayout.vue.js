@@ -1,8 +1,11 @@
 import { computed, ref } from "vue";
-import { useRoute } from "vue-router";
-import { Activity, Bell, Bot, Boxes, ChevronLeft, CircleDollarSign, ClipboardList, Database, FileClock, Gauge, Menu, Search, Settings, ShieldCheck, UsersRound, X, } from "@lucide/vue";
+import { useRoute, useRouter } from "vue-router";
+import { Activity, Bell, Bot, Boxes, ChevronLeft, CircleDollarSign, ClipboardList, Database, FileClock, Gauge, Menu, LogOut, Search, Settings, ShieldCheck, UsersRound, X, } from "@lucide/vue";
 import BrandMark from "@/components/BrandMark.vue";
+import { useAdminAuthStore } from "@/stores/auth";
 const route = useRoute();
+const router = useRouter();
+const auth = useAdminAuthStore();
 const mobileOpen = ref(false);
 const collapsed = ref(false);
 const groups = [
@@ -13,6 +16,10 @@ const groups = [
 ];
 const title = computed(() => String(route.meta.title || "管理控制台"));
 const description = computed(() => String(route.meta.description || ""));
+async function logout() {
+    auth.logout();
+    await router.replace("/login");
+}
 const __VLS_ctx = {};
 let __VLS_components;
 let __VLS_intrinsics;
@@ -22,6 +29,8 @@ void __VLS_ctx, __VLS_components, __VLS_intrinsics, __VLS_directives;
 __VLS_withDotValue(collapsed, {});
 // @ts-ignore
 __VLS_withDotValue(mobileOpen, {});
+// @ts-ignore
+__VLS_withDotValue(auth, {});
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "admin-shell" },
     ...{ class: ({ 'admin-shell--collapsed': collapsed.value }) },
@@ -148,10 +157,32 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
     ...{ class: "admin-user__avatar" },
 });
 /** @type {__VLS_StyleScopedClasses['admin-user__avatar']} */ ;
+(auth.value.user?.username?.charAt(0).toUpperCase() || "A");
 if (!collapsed.value) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
     __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
+    (auth.value.user?.username || "平台管理员");
     __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
+}
+if (!collapsed.value) {
+    __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+        ...{ onClick: (logout) },
+        ...{ class: "icon-button" },
+        type: "button",
+        'aria-label': "退出登录",
+    });
+    /** @type {__VLS_StyleScopedClasses['icon-button']} */ ;
+    let __VLS_25;
+    /** @ts-ignore @type { | typeof __VLS_components.LogOut} */
+    LogOut;
+    // @ts-ignore
+    const __VLS_26 = __VLS_asFunctionalComponent1(__VLS_25, new __VLS_25({
+        // @ts-ignore
+        size: (16),
+    }));
+    const __VLS_27 = __VLS_26({
+        size: (16),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_26));
 }
 if (mobileOpen.value) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.button)({
@@ -162,7 +193,7 @@ if (mobileOpen.value) {
                     throw 0;
                 return (mobileOpen.value = false);
                 // @ts-ignore
-                [collapsed, mobileOpen, mobileOpen,];
+                [collapsed, collapsed, mobileOpen, mobileOpen, auth, auth,];
             } },
         ...{ class: "admin-backdrop" },
         type: "button",
@@ -192,17 +223,17 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
 });
 /** @type {__VLS_StyleScopedClasses['icon-button']} */ ;
 /** @type {__VLS_StyleScopedClasses['desktop-only']} */ ;
-let __VLS_25;
+let __VLS_30;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronLeft} */
 ChevronLeft;
 // @ts-ignore
-const __VLS_26 = __VLS_asFunctionalComponent1(__VLS_25, new __VLS_25({
+const __VLS_31 = __VLS_asFunctionalComponent1(__VLS_30, new __VLS_30({
     // @ts-ignore
     size: (18),
 }));
-const __VLS_27 = __VLS_26({
+const __VLS_32 = __VLS_31({
     size: (18),
-}, ...__VLS_functionalComponentArgsRest(__VLS_26));
+}, ...__VLS_functionalComponentArgsRest(__VLS_31));
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: // @ts-ignore
         (...[$event]) => {
@@ -217,32 +248,32 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
 });
 /** @type {__VLS_StyleScopedClasses['icon-button']} */ ;
 /** @type {__VLS_StyleScopedClasses['mobile-only']} */ ;
-let __VLS_30;
+let __VLS_35;
 /** @ts-ignore @type { | typeof __VLS_components.Menu} */
 Menu;
 // @ts-ignore
-const __VLS_31 = __VLS_asFunctionalComponent1(__VLS_30, new __VLS_30({
+const __VLS_36 = __VLS_asFunctionalComponent1(__VLS_35, new __VLS_35({
     // @ts-ignore
     size: (19),
 }));
-const __VLS_32 = __VLS_31({
+const __VLS_37 = __VLS_36({
     size: (19),
-}, ...__VLS_functionalComponentArgsRest(__VLS_31));
+}, ...__VLS_functionalComponentArgsRest(__VLS_36));
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "admin-header__search" },
 });
 /** @type {__VLS_StyleScopedClasses['admin-header__search']} */ ;
-let __VLS_35;
+let __VLS_40;
 /** @ts-ignore @type { | typeof __VLS_components.Search} */
 Search;
 // @ts-ignore
-const __VLS_36 = __VLS_asFunctionalComponent1(__VLS_35, new __VLS_35({
+const __VLS_41 = __VLS_asFunctionalComponent1(__VLS_40, new __VLS_40({
     // @ts-ignore
     size: (16),
 }));
-const __VLS_37 = __VLS_36({
+const __VLS_42 = __VLS_41({
     size: (16),
-}, ...__VLS_functionalComponentArgsRest(__VLS_36));
+}, ...__VLS_functionalComponentArgsRest(__VLS_41));
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
 __VLS_asFunctionalElement1(__VLS_intrinsics.kbd, __VLS_intrinsics.kbd)({});
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
@@ -251,32 +282,32 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     'aria-label': "通知",
 });
 /** @type {__VLS_StyleScopedClasses['icon-button']} */ ;
-let __VLS_40;
+let __VLS_45;
 /** @ts-ignore @type { | typeof __VLS_components.Bell} */
 Bell;
 // @ts-ignore
-const __VLS_41 = __VLS_asFunctionalComponent1(__VLS_40, new __VLS_40({
+const __VLS_46 = __VLS_asFunctionalComponent1(__VLS_45, new __VLS_45({
     // @ts-ignore
     size: (18),
 }));
-const __VLS_42 = __VLS_41({
+const __VLS_47 = __VLS_46({
     size: (18),
-}, ...__VLS_functionalComponentArgsRest(__VLS_41));
+}, ...__VLS_functionalComponentArgsRest(__VLS_46));
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
     ...{ class: "admin-header__status" },
 });
 /** @type {__VLS_StyleScopedClasses['admin-header__status']} */ ;
-let __VLS_45;
+let __VLS_50;
 /** @ts-ignore @type { | typeof __VLS_components.ShieldCheck} */
 ShieldCheck;
 // @ts-ignore
-const __VLS_46 = __VLS_asFunctionalComponent1(__VLS_45, new __VLS_45({
+const __VLS_51 = __VLS_asFunctionalComponent1(__VLS_50, new __VLS_50({
     // @ts-ignore
     size: (15),
 }));
-const __VLS_47 = __VLS_46({
+const __VLS_52 = __VLS_51({
     size: (15),
-}, ...__VLS_functionalComponentArgsRest(__VLS_46));
+}, ...__VLS_functionalComponentArgsRest(__VLS_51));
 __VLS_asFunctionalElement1(__VLS_intrinsics.main, __VLS_intrinsics.main)({
     ...{ class: "admin-content" },
 });
@@ -291,30 +322,15 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.h1, __VLS_intrinsics.h1)({});
 (__VLS_unwrap(title, {}));
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
 (__VLS_unwrap(description, {}));
-let __VLS_50;
-/** @ts-ignore @type { | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button'] | typeof __VLS_components.elButton | typeof __VLS_components.ElButton | typeof __VLS_components['el-button']} */
-elButton;
-// @ts-ignore
-const __VLS_51 = __VLS_asFunctionalComponent1(__VLS_50, new __VLS_50({
-    // @ts-ignore
-    type: "primary",
-}));
-const __VLS_52 = __VLS_51({
-    type: "primary",
-}, ...__VLS_functionalComponentArgsRest(__VLS_51));
-const { default: __VLS_55 } = __VLS_nonNull(__VLS_53.slots);
-// @ts-ignore
-[title, description,];
-var __VLS_53;
-let __VLS_56;
+let __VLS_55;
 /** @ts-ignore @type { | typeof __VLS_components.RouterView} */
 RouterView;
 // @ts-ignore
-const __VLS_57 = __VLS_asFunctionalComponent1(__VLS_56, new __VLS_56({
+const __VLS_56 = __VLS_asFunctionalComponent1(__VLS_55, new __VLS_55({
 // @ts-ignore
 }));
-const __VLS_58 = __VLS_57({}, ...__VLS_functionalComponentArgsRest(__VLS_57));
+const __VLS_57 = __VLS_56({}, ...__VLS_functionalComponentArgsRest(__VLS_56));
 // @ts-ignore
-[];
+[title, description,];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

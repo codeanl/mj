@@ -22,6 +22,7 @@ import {
   type GenerationCapabilities,
 } from "@/services/generation"
 import { apiErrorMessage } from "@/services/http"
+import { listImageModels } from "@/services/models"
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -34,7 +35,7 @@ const creationTypes = [
 const defaultCapabilities: GenerationCapabilities = {
   image: {
     enabled: true,
-    models: [{ value: "gpt-image-2", label: "gpt-image-2" }],
+    models: [],
     sizes: [
       { value: "1:1", label: "1:1", width: 2048, height: 2048 },
       { value: "16:9", label: "16:9", width: 2048, height: 1152 },
@@ -50,11 +51,12 @@ const defaultCapabilities: GenerationCapabilities = {
 const activeType = ref("image")
 const prompt = ref("")
 const capabilities = ref<GenerationCapabilities>(defaultCapabilities)
-const selectedModel = ref("gpt-image-2")
+const selectedModel = ref("")
 const selectedSize = ref("16:9")
 const selectedQuality = ref("2K")
 const darkMode = ref(false)
 const creating = ref(false)
+const modelsLoading = ref(true)
 const recentLoading = ref(true)
 const recentWorks = ref<assetApi.Asset[]>([])
 const recentPreviewUrls = ref<Record<string, string>>({})
@@ -81,6 +83,10 @@ async function startCreation() {
   }
   if (activeType.value === "video") {
     ElMessage.info("当前后端暂未配置视频生成渠道")
+    return
+  }
+  if (!selectedModel.value) {
+    ElMessage.warning("当前没有可用的图片模型，请联系管理员配置模型渠道")
     return
   }
   if (creating.value) return
@@ -137,6 +143,21 @@ async function loadRecentWorks() {
   }
 }
 
+async function loadModels() {
+  modelsLoading.value = true
+  try {
+    const models = await listImageModels()
+    capabilities.value.image.models = models.map((model) => ({ value: model.id, label: model.displayName }))
+    if (!models.some((model) => model.id === selectedModel.value)) selectedModel.value = models[0]?.id || ""
+  } catch (error) {
+    capabilities.value.image.models = []
+    selectedModel.value = ""
+    ElMessage.error(apiErrorMessage(error, "图片模型加载失败"))
+  } finally {
+    modelsLoading.value = false
+  }
+}
+
 function revokeRecentPreviewUrls() {
   Object.values(recentPreviewUrls.value).forEach((url) => url && URL.revokeObjectURL(url))
   recentPreviewUrls.value = {}
@@ -154,7 +175,7 @@ function recentMeta(work: assetApi.Asset) {
 }
 
 onMounted(() => {
-  void loadRecentWorks()
+  void Promise.all([loadModels(), loadRecentWorks()])
 })
 onBeforeUnmount(revokeRecentPreviewUrls)
 </script>
@@ -206,7 +227,7 @@ onBeforeUnmount(revokeRecentPreviewUrls)
             <textarea v-model="prompt" :placeholder="promptPlaceholder" rows="3" maxlength="1000" />
             <div class="composer__options">
               <div class="composer__selects">
-                <el-select v-model="selectedModel" class="compact-select" aria-label="模型" disabled>
+                <el-select v-model="selectedModel" class="compact-select" aria-label="模型" :loading="modelsLoading" :placeholder="modelsLoading ? '加载模型' : '暂无模型'">
                   <el-option v-for="option in currentCapability?.models || []" :key="option.value" :label="option.label" :value="option.value" />
                 </el-select>
                 <el-select v-model="selectedSize" class="compact-select compact-select--small" aria-label="画面比例" :disabled="!currentCapability?.enabled">
@@ -216,7 +237,7 @@ onBeforeUnmount(revokeRecentPreviewUrls)
                   <el-option v-for="option in currentCapability?.qualities || []" :key="option.value" :label="option.label" :value="option.value" />
                 </el-select>
               </div>
-              <button class="create-button" type="button" :disabled="creating" @click="startCreation">
+              <button class="create-button" type="button" :disabled="creating || modelsLoading || !selectedModel" @click="startCreation">
                 <LoaderCircle v-if="creating" class="spin" :size="18" />
                 <Sparkles v-else :size="18" />
                 <span>{{ creating ? "提交中" : "开始生成" }}</span>

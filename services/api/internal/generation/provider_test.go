@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"nova-creator-platform/services/api/internal/modelchannels"
 )
 
 func TestProviderUsesTaskSpecificImageOptions(t *testing.T) {
@@ -23,10 +25,10 @@ func TestProviderUsesTaskSpecificImageOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewOpenAIImageProvider(server.URL, "test-key", time.Second, 1024*1024)
+	provider := NewOpenAIImageProvider(time.Second, 1024*1024)
 	_, err := provider.Generate(context.Background(), Task{
 		Model: "gpt-image-2", Prompt: "测试", providerSize: "576x1024", providerQuality: "high",
-	})
+	}, modelchannels.ResolvedModel{BaseURL: server.URL, APIKey: "test-key", UpstreamModel: "gpt-image-2"})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
-import { useRoute } from "vue-router"
+import { useRoute, useRouter } from "vue-router"
 import {
   Activity,
   Bell,
@@ -13,6 +13,7 @@ import {
   FileClock,
   Gauge,
   Menu,
+  LogOut,
   Search,
   Settings,
   ShieldCheck,
@@ -21,8 +22,11 @@ import {
 } from "@lucide/vue"
 
 import BrandMark from "@/components/BrandMark.vue"
+import { useAdminAuthStore } from "@/stores/auth"
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAdminAuthStore()
 const mobileOpen = ref(false)
 const collapsed = ref(false)
 
@@ -35,6 +39,11 @@ const groups = [
 
 const title = computed(() => String(route.meta.title || "管理控制台"))
 const description = computed(() => String(route.meta.description || ""))
+
+async function logout() {
+  auth.logout()
+  await router.replace("/login")
+}
 </script>
 
 <template>
@@ -57,8 +66,9 @@ const description = computed(() => String(route.meta.description || ""))
       </nav>
 
       <div class="admin-user">
-        <span class="admin-user__avatar">A</span>
-        <span v-if="!collapsed"><strong>平台管理员</strong><small>超级管理员</small></span>
+        <span class="admin-user__avatar">{{ auth.user?.username?.charAt(0).toUpperCase() || "A" }}</span>
+        <span v-if="!collapsed"><strong>{{ auth.user?.username || "平台管理员" }}</strong><small>管理员</small></span>
+        <button v-if="!collapsed" class="icon-button" type="button" aria-label="退出登录" @click="logout"><LogOut :size="16" /></button>
       </div>
     </aside>
 
@@ -76,7 +86,6 @@ const description = computed(() => String(route.meta.description || ""))
       <main class="admin-content">
         <div class="admin-page-heading">
           <div><p>NOVA CONSOLE</p><h1>{{ title }}</h1><span>{{ description }}</span></div>
-          <el-button type="primary">新建配置</el-button>
         </div>
         <RouterView />
       </main>

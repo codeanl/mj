@@ -48,7 +48,12 @@ func (handlers generationHandlers) GetCapabilities(w http.ResponseWriter, r *htt
 		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
 		return
 	}
-	writeJSON(w, http.StatusOK, response{Code: 0, Data: handlers.service.Capabilities(), Msg: "获取成功"})
+	capabilities, err := handlers.service.Capabilities(r.Context())
+	if err != nil {
+		handlers.writeGenerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: capabilities, Msg: "获取成功"})
 }
 
 func (handlers generationHandlers) GetTask(w http.ResponseWriter, r *http.Request) {

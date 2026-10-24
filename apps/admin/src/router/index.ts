@@ -1,7 +1,10 @@
 import { createRouter, createWebHistory } from "vue-router"
 
 import AdminLayout from "@/layouts/AdminLayout.vue"
+import ChannelsView from "@/views/ChannelsView.vue"
 import EmptyAdminView from "@/views/EmptyAdminView.vue"
+import LoginView from "@/views/LoginView.vue"
+import { useAdminAuthStore } from "@/stores/auth"
 
 const adminSections = [
   ["overview", "经营概览", "查看平台运行与业务核心指标。"],
@@ -22,14 +25,23 @@ const router = createRouter({
     {
       path: "/",
       component: AdminLayout,
+      meta: { requiresAdmin: true },
       redirect: "/overview",
       children: adminSections.map(([path, title, description]) => ({
         path,
-        component: EmptyAdminView,
+        component: path === "channels" ? ChannelsView : EmptyAdminView,
         meta: { title, description },
       })),
     },
+    { path: "/login", component: LoginView, meta: { title: "管理员登录", guestOnly: true } },
   ],
+})
+
+router.beforeEach(async (to) => {
+  const auth = useAdminAuthStore()
+  await auth.ensureSession()
+  if (to.meta.requiresAdmin && !auth.authenticated) return "/login"
+  if (to.meta.guestOnly && auth.authenticated) return "/channels"
 })
 
 router.afterEach((to) => {
@@ -37,4 +49,3 @@ router.afterEach((to) => {
 })
 
 export default router
-

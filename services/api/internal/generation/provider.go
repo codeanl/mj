@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"nova-creator-platform/services/api/internal/modelchannels"
 )
 
 var ErrProviderUnavailable = errors.New("image generation channel is not configured")
@@ -22,36 +24,27 @@ type GeneratedImage struct {
 }
 
 type ImageProvider interface {
-	Generate(context.Context, Task) (GeneratedImage, error)
-	Available() bool
+	Generate(context.Context, Task, modelchannels.ResolvedModel) (GeneratedImage, error)
 }
 
 type OpenAIImageProvider struct {
-	baseURL  string
-	apiKey   string
 	client   *http.Client
 	maxBytes int64
 }
 
-func NewOpenAIImageProvider(baseURL, apiKey string, timeout time.Duration, maxBytes int64) *OpenAIImageProvider {
+func NewOpenAIImageProvider(timeout time.Duration, maxBytes int64) *OpenAIImageProvider {
 	return &OpenAIImageProvider{
-		baseURL:  strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		apiKey:   strings.TrimSpace(apiKey),
 		client:   &http.Client{Timeout: timeout},
 		maxBytes: maxBytes,
 	}
 }
 
-func (provider *OpenAIImageProvider) Available() bool {
-	return provider.baseURL != "" && provider.apiKey != ""
-}
-
-func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task) (GeneratedImage, error) {
-	if !provider.Available() {
+func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task, selected modelchannels.ResolvedModel) (GeneratedImage, error) {
+	if selected.BaseURL == "" || selected.APIKey == "" || selected.UpstreamModel == "" {
 		return GeneratedImage{}, ErrProviderUnavailable
 	}
 	payload, err := json.Marshal(map[string]interface{}{
-		"model":   task.Model,
+		"model":   selected.UpstreamModel,
 		"prompt":  task.Prompt,
 		"n":       1,
 		"size":    task.providerSize,
@@ -60,11 +53,11 @@ func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task) (G
 	if err != nil {
 		return GeneratedImage{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, provider.baseURL+"/images/generations", bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(selected.BaseURL, "/")+"/images/generations", bytes.NewReader(payload))
 	if err != nil {
 		return GeneratedImage{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+provider.apiKey)
+	request.Header.Set("Authorization", "Bearer "+selected.APIKey)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := provider.client.Do(request)
 	if err != nil {
@@ -107,10 +100,10 @@ func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task) (G
 	if result.Data[0].URL == "" {
 		return GeneratedImage{}, errors.New("image provider returned neither b64_json nor url")
 	}
-	return provider.download(ctx, result.Data[0].URL)
+	return provider.download(ctx, result.Data[0].URL, selected)
 }
 
-func (provider *OpenAIImageProvider) download(ctx context.Context, rawURL string) (GeneratedImage, error) {
+func (provider *OpenAIImageProvider) download(ctx context.Context, rawURL string, selected modelchannels.ResolvedModel) (GeneratedImage, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" {
 		return GeneratedImage{}, errors.New("image provider returned an invalid output URL")
@@ -119,9 +112,9 @@ func (provider *OpenAIImageProvider) download(ctx context.Context, rawURL string
 	if err != nil {
 		return GeneratedImage{}, err
 	}
-	baseURL, _ := url.Parse(provider.baseURL)
+	baseURL, _ := url.Parse(selected.BaseURL)
 	if baseURL != nil && strings.EqualFold(baseURL.Hostname(), parsedURL.Hostname()) {
-		request.Header.Set("Authorization", "Bearer "+provider.apiKey)
+		request.Header.Set("Authorization", "Bearer "+selected.APIKey)
 	}
 	response, err := provider.client.Do(request)
 	if err != nil {
