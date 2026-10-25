@@ -41,6 +41,7 @@ type Task struct {
 	Height              int        `json:"height"`
 	Quality             string     `json:"quality"`
 	DurationSeconds     int        `json:"durationSeconds,omitempty"`
+	VideoMode           string     `json:"videoMode,omitempty"`
 	SoundEnabled        bool       `json:"soundEnabled"`
 	WatermarkEnabled    bool       `json:"watermarkEnabled"`
 	ErrorMessage        string     `json:"errorMessage,omitempty"`

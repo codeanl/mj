@@ -45,3 +45,29 @@ func TestModelValidationAndImageCatalogDetection(t *testing.T) {
 		t.Fatal("unexpected image model inference")
 	}
 }
+
+func TestSpecialVideoModeRequiresExecutableOperation(t *testing.T) {
+	input := ModelInput{ModelID: "extend-pro", Capability: "video", CapabilityOverride: true, CapabilityConfig: ModelCapabilityConfig{MinDuration: 4, MaxDuration: 30, Modes: []string{"extend"}, ModeOperations: map[string]ModeOperationConfig{}}}
+	if _, err := normalizeModelInput(input); err == nil {
+		t.Fatal("special video mode without create/query paths must be rejected")
+	}
+	input.CapabilityConfig.ModeOperations["extend"] = ModeOperationConfig{CreatePath: "/extend", QueryPath: "/extend/:task_id"}
+	if _, err := normalizeModelInput(input); err != nil {
+		t.Fatalf("configured special video mode should be valid: %v", err)
+	}
+	operation := input.CapabilityConfig.ModeOperations["extend"]
+	operation.RequestTemplate = `{invalid`
+	input.CapabilityConfig.ModeOperations["extend"] = operation
+	if _, err := normalizeModelInput(input); err == nil {
+		t.Fatal("invalid special video request template must be rejected")
+	}
+}
+
+func TestOfficialModelConfigRequiresVerifiedCapabilityProfile(t *testing.T) {
+	if config, ok := officialModelConfig("compshare-minimax-h3", "MiniMax-H3"); !ok || config.MaxDuration != 30 || len(config.Modes) != 3 {
+		t.Fatalf("MiniMax official capability profile missing: %#v %v", config, ok)
+	}
+	if _, ok := officialModelConfig("yumeng", "KlingO3"); ok {
+		t.Fatal("a built-in model ID without a verified capability profile must remain editable")
+	}
+}

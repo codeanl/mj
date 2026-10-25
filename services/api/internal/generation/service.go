@@ -164,12 +164,15 @@ func normalizeVideoReferences(mode string, values []VideoReference) ([]VideoRefe
 	if mode == VideoModeText {
 		return nil, len(values) == 0
 	}
-	if mode != VideoModeFrames && mode != VideoModeReference {
+	if mode != VideoModeFrames && mode != VideoModeReference && !isSpecialVideoMode(mode) {
 		return nil, false
 	}
 	maximum := 12
 	if mode == VideoModeFrames {
 		maximum = 2
+	}
+	if isSpecialVideoMode(mode) {
+		maximum = 12
 	}
 	if len(values) < 1 || len(values) > maximum {
 		return nil, false
@@ -189,7 +192,7 @@ func normalizeVideoReferences(mode string, values []VideoReference) ([]VideoRefe
 		if mode == VideoModeFrames && value.Role != VideoRoleFirstFrame && value.Role != VideoRoleLastFrame {
 			return nil, false
 		}
-		if mode == VideoModeReference && value.Role != VideoRoleImage && value.Role != VideoRoleVideo && value.Role != VideoRoleAudio {
+		if (mode == VideoModeReference || isSpecialVideoMode(mode)) && value.Role != VideoRoleImage && value.Role != VideoRoleVideo && value.Role != VideoRoleAudio {
 			return nil, false
 		}
 		seenIDs[value.AssetID] = struct{}{}
@@ -198,6 +201,15 @@ func normalizeVideoReferences(mode string, values []VideoReference) ([]VideoRefe
 	}
 	if mode == VideoModeFrames {
 		return result, seenRoles[VideoRoleFirstFrame] <= 1 && seenRoles[VideoRoleLastFrame] <= 1
+	}
+	if mode == "extend" || mode == "edit" {
+		return result, seenRoles[VideoRoleVideo] >= 1
+	}
+	if mode == "lip_sync" {
+		return result, seenRoles[VideoRoleVideo] >= 1 && seenRoles[VideoRoleAudio] >= 1
+	}
+	if mode == "motion_transfer" {
+		return result, seenRoles[VideoRoleVideo] >= 1 && seenRoles[VideoRoleImage] >= 1
 	}
 	return result, seenRoles[VideoRoleImage] <= 9 && seenRoles[VideoRoleVideo] <= 3 && seenRoles[VideoRoleAudio] <= 3 && seenRoles[VideoRoleAudio] < len(result)
 }

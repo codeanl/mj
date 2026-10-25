@@ -238,7 +238,11 @@ func (worker *Worker) processVideo(ctx context.Context, task Task) {
 			continue
 		}
 		_ = worker.repository.SetChannel(ctx, task.ID, candidate.ChannelID)
-		attemptID, _, err := worker.repository.StartAttempt(ctx, task.ID, candidate.ChannelID, candidate.Protocol, "/minimax/v2/video_generation")
+		createPath := "/minimax/v2/video_generation"
+		if isSpecialVideoMode(task.VideoMode) {
+			createPath = candidate.CapabilityConfig.ModeOperations[task.VideoMode].CreatePath
+		}
+		attemptID, _, err := worker.repository.StartAttempt(ctx, task.ID, candidate.ChannelID, candidate.Protocol, createPath)
 		if err != nil {
 			_ = worker.channels.Release(ctx, candidate.ChannelID, false, 0, err.Error())
 			latest = err
@@ -252,7 +256,11 @@ func (worker *Worker) processVideo(ctx context.Context, task Task) {
 		if err == nil && result.Pending {
 			_ = worker.repository.FinishAttempt(ctx, attemptID, "pending", nil, duration, "")
 			_ = worker.channels.Release(ctx, candidate.ChannelID, true, duration, "")
-			_ = worker.repository.MarkPolling(ctx, task, result.UpstreamTaskID, "/minimax/v2/query/video_generation/:task_id", time.Now().Add(time.Duration(candidate.PollIntervalSeconds)*time.Second))
+			queryPath := "/minimax/v2/query/video_generation/:task_id"
+			if isSpecialVideoMode(task.VideoMode) {
+				queryPath = candidate.CapabilityConfig.ModeOperations[task.VideoMode].QueryPath
+			}
+			_ = worker.repository.MarkPolling(ctx, task, result.UpstreamTaskID, queryPath, time.Now().Add(time.Duration(candidate.PollIntervalSeconds)*time.Second))
 			return
 		}
 		latest = err

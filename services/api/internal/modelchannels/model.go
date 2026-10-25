@@ -33,16 +33,19 @@ type Channel struct {
 }
 
 type Model struct {
-	ID               string                `json:"id"`
-	ChannelID        string                `json:"channelId"`
-	ModelID          string                `json:"modelId"`
-	DisplayName      string                `json:"displayName"`
-	Capability       string                `json:"capability"`
-	Enabled          bool                  `json:"enabled"`
-	SortOrder        int                   `json:"sortOrder"`
-	CapabilityConfig ModelCapabilityConfig `json:"capabilityConfig"`
-	CreatedAt        time.Time             `json:"createdAt"`
-	UpdatedAt        time.Time             `json:"updatedAt"`
+	ID                       string                `json:"id"`
+	ChannelID                string                `json:"channelId"`
+	ModelID                  string                `json:"modelId"`
+	DisplayName              string                `json:"displayName"`
+	Capability               string                `json:"capability"`
+	Enabled                  bool                  `json:"enabled"`
+	SortOrder                int                   `json:"sortOrder"`
+	CapabilityConfig         ModelCapabilityConfig `json:"capabilityConfig"`
+	CapabilityOverride       bool                  `json:"capabilityOverride"`
+	IsBuiltIn                bool                  `json:"isBuiltIn"`
+	OfficialCapabilityConfig ModelCapabilityConfig `json:"officialCapabilityConfig"`
+	CreatedAt                time.Time             `json:"createdAt"`
+	UpdatedAt                time.Time             `json:"updatedAt"`
 }
 
 type PublicModel struct {
@@ -53,13 +56,24 @@ type PublicModel struct {
 }
 
 type ModelCapabilityConfig struct {
-	Ratios            []string `json:"ratios,omitempty"`
-	Qualities         []string `json:"qualities,omitempty"`
-	MinDuration       int      `json:"minDuration,omitempty"`
-	MaxDuration       int      `json:"maxDuration,omitempty"`
-	Modes             []string `json:"modes,omitempty"`
-	SupportsSound     bool     `json:"supportsSound"`
-	SupportsWatermark bool     `json:"supportsWatermark"`
+	Ratios            []string                       `json:"ratios,omitempty"`
+	Qualities         []string                       `json:"qualities,omitempty"`
+	MinDuration       int                            `json:"minDuration,omitempty"`
+	MaxDuration       int                            `json:"maxDuration,omitempty"`
+	Modes             []string                       `json:"modes,omitempty"`
+	SupportsSound     bool                           `json:"supportsSound"`
+	SupportsWatermark bool                           `json:"supportsWatermark"`
+	ModeOperations    map[string]ModeOperationConfig `json:"modeOperations,omitempty"`
+}
+
+type ModeOperationConfig struct {
+	CreatePath      string `json:"createPath,omitempty"`
+	QueryPath       string `json:"queryPath,omitempty"`
+	CancelPath      string `json:"cancelPath,omitempty"`
+	CancelMethod    string `json:"cancelMethod,omitempty"`
+	RequestTemplate string `json:"requestTemplate,omitempty"`
+	ResultField     string `json:"resultField,omitempty"`
+	StatusField     string `json:"statusField,omitempty"`
 }
 
 type OperationConfig struct {
@@ -138,6 +152,7 @@ type ResolvedModel struct {
 	MaxConcurrency      int
 	TimeoutSeconds      int
 	PollIntervalSeconds int
+	CapabilityConfig    ModelCapabilityConfig
 }
 
 type ChannelInput struct {
@@ -157,12 +172,13 @@ type ChannelInput struct {
 }
 
 type ModelInput struct {
-	ModelID          string                `json:"modelId"`
-	DisplayName      string                `json:"displayName"`
-	Capability       string                `json:"capability"`
-	Enabled          bool                  `json:"enabled"`
-	SortOrder        int                   `json:"sortOrder"`
-	CapabilityConfig ModelCapabilityConfig `json:"capabilityConfig"`
+	ModelID            string                `json:"modelId"`
+	DisplayName        string                `json:"displayName"`
+	Capability         string                `json:"capability"`
+	Enabled            bool                  `json:"enabled"`
+	SortOrder          int                   `json:"sortOrder"`
+	CapabilityConfig   ModelCapabilityConfig `json:"capabilityConfig"`
+	CapabilityOverride bool                  `json:"capabilityOverride"`
 }
 
 type ConnectionResult struct {

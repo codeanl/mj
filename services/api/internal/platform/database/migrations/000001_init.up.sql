@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS channel_models (
     enabled boolean NOT NULL DEFAULT true,
     sort_order integer NOT NULL DEFAULT 0,
 	capability_config jsonb NOT NULL DEFAULT '{}'::jsonb,
+	capability_override boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT channel_models_capability_check CHECK (capability IN ('text', 'image', 'video', 'audio')),
@@ -192,6 +193,7 @@ ALTER TABLE model_channels DROP CONSTRAINT IF EXISTS model_channels_protocol_che
 ALTER TABLE model_channels ADD CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'compshare-minimax-h3', 'custom', 'compatible'));
 ALTER TABLE channel_models DROP CONSTRAINT IF EXISTS channel_models_capability_check;
 ALTER TABLE channel_models ADD COLUMN IF NOT EXISTS capability_config jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE channel_models ADD COLUMN IF NOT EXISTS capability_override boolean NOT NULL DEFAULT false;
 ALTER TABLE channel_models ADD CONSTRAINT channel_models_capability_check CHECK (capability IN ('text', 'image', 'video', 'audio'));
 DROP INDEX IF EXISTS channel_models_model_id_unique_lower;
 CREATE UNIQUE INDEX IF NOT EXISTS channel_models_channel_model_unique_lower ON channel_models (channel_id, lower(model_id));

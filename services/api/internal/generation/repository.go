@@ -126,7 +126,7 @@ func (repository *Repository) CreateImages(ctx context.Context, userID, requestI
 			RETURNING id::text, asset_id::text, user_id::text, channel_id::text, kind, status, model, prompt,
 			          parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
 			          parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality',
-			          coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
+			          coalesce((parameters->>'durationSeconds')::integer,0),coalesce(parameters->>'videoMode',''),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
 			          coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),created_at
 		`, taskID, userID, assetID, options.ChannelID, options.Model, prompt, taskParametersJSON, pointsCost, pointsTransactionID)
 
@@ -230,7 +230,7 @@ func loadRequestTasksTx(ctx context.Context, tx pgx.Tx, userID, requestID, kind 
 		SELECT id::text,asset_id::text,user_id::text,coalesce(channel_id::text,''),kind,status,model,prompt,
 		       coalesce(parameters->>'size',''),coalesce((parameters->>'width')::integer,0),coalesce((parameters->>'height')::integer,0),
 		       coalesce(parameters->>'quality',''),coalesce(parameters->>'providerSize',''),coalesce(parameters->>'providerQuality',''),
-		       coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),
+		       coalesce((parameters->>'durationSeconds')::integer,0),coalesce(parameters->>'videoMode',''),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),
 		       coalesce(parameters->'referenceAssetIds','[]'::jsonb),points_cost,coalesce(points_transaction_id::text,''),points_refunded,
 		       coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),created_at
 		FROM generation_tasks WHERE user_id=$1 AND parameters->>'requestId'=$2 AND kind=$3
@@ -262,7 +262,7 @@ func (repository *Repository) Get(ctx context.Context, userID, taskID string) (T
 	row := repository.pool.QueryRow(ctx, `
 		SELECT id::text, asset_id::text, user_id::text, coalesce(channel_id::text, ''), kind, status, model, prompt,
 		       coalesce(parameters->>'size',''), coalesce((parameters->>'width')::integer,0), coalesce((parameters->>'height')::integer,0),
-		       coalesce(parameters->>'quality',''), coalesce(parameters->>'providerSize',''), coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false), coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
+		       coalesce(parameters->>'quality',''), coalesce(parameters->>'providerSize',''), coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce(parameters->>'videoMode',''),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false), coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
 		       coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),coalesce(error_message, ''), created_at
 		FROM generation_tasks
 		WHERE id = $1 AND user_id = $2
@@ -301,7 +301,7 @@ func (repository *Repository) ClaimNext(ctx context.Context, pollLeaseUntil time
 	row := tx.QueryRow(ctx, `
 		SELECT id::text, asset_id::text, user_id::text, channel_id::text, kind, status, model, prompt,
 		       coalesce(parameters->>'size',''), coalesce((parameters->>'width')::integer,0), coalesce((parameters->>'height')::integer,0),
-		       coalesce(parameters->>'quality',''), coalesce(parameters->>'providerSize',''), coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false), coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
+		       coalesce(parameters->>'quality',''), coalesce(parameters->>'providerSize',''), coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce(parameters->>'videoMode',''),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false), coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
 		       coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),created_at
 		FROM generation_tasks
 		WHERE status = 'queued' OR (kind='video' AND status='running' AND upstream_task_id IS NOT NULL AND next_poll_at <= now())
@@ -373,7 +373,7 @@ func scanTask(row rowScanner, task *Task, withError bool) error {
 	var referenceAssetIDs []byte
 	values := []interface{}{
 		&task.ID, &task.AssetID, &task.userID, &task.ChannelID, &task.Kind, &task.Status, &task.Model, &task.Prompt,
-		&task.Size, &task.Width, &task.Height, &task.Quality, &task.providerSize, &task.providerQuality, &task.DurationSeconds, &task.SoundEnabled, &task.WatermarkEnabled,
+		&task.Size, &task.Width, &task.Height, &task.Quality, &task.providerSize, &task.providerQuality, &task.DurationSeconds, &task.VideoMode, &task.SoundEnabled, &task.WatermarkEnabled,
 		&referenceAssetIDs, &task.PointsCost, &task.pointsTransactionID, &task.pointsRefunded,
 		&task.UpstreamTaskID, &task.UpstreamQueryPath, &task.ReviewReason,
 	}
@@ -388,7 +388,7 @@ func scanTask(row rowScanner, task *Task, withError bool) error {
 }
 
 func (repository *Repository) GetByID(ctx context.Context, taskID string) (Task, error) {
-	row := repository.pool.QueryRow(ctx, `SELECT id::text,asset_id::text,user_id::text,coalesce(channel_id::text,''),kind,status,model,prompt,coalesce(parameters->>'size',''),coalesce((parameters->>'width')::integer,0),coalesce((parameters->>'height')::integer,0),coalesce(parameters->>'quality',''),coalesce(parameters->>'providerSize',''),coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),coalesce(parameters->'referenceAssetIds','[]'::jsonb),points_cost,coalesce(points_transaction_id::text,''),points_refunded,coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),coalesce(error_message,''),created_at FROM generation_tasks WHERE id=$1`, taskID)
+	row := repository.pool.QueryRow(ctx, `SELECT id::text,asset_id::text,user_id::text,coalesce(channel_id::text,''),kind,status,model,prompt,coalesce(parameters->>'size',''),coalesce((parameters->>'width')::integer,0),coalesce((parameters->>'height')::integer,0),coalesce(parameters->>'quality',''),coalesce(parameters->>'providerSize',''),coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce(parameters->>'videoMode',''),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),coalesce(parameters->'referenceAssetIds','[]'::jsonb),points_cost,coalesce(points_transaction_id::text,''),points_refunded,coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),coalesce(error_message,''),created_at FROM generation_tasks WHERE id=$1`, taskID)
 	var task Task
 	if err := scanTask(row, &task, true); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

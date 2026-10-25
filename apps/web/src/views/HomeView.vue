@@ -103,12 +103,16 @@ const videoModes: Array<{ value: VideoGenerationMode; label: string }> = [
   { value: "text", label: "文生视频" },
   { value: "frames", label: "首尾帧" },
   { value: "reference", label: "全能参考" },
+  { value: "extend", label: "视频延长" },
+  { value: "lip_sync", label: "对口型" },
+  { value: "edit", label: "视频编辑" },
+  { value: "motion_transfer", label: "动作迁移" },
 ]
 const availableVideoModes = computed(() => {
 	const allowed=selectedVideoProfile.value?.modes
-	return !allowed?.length ? videoModes : videoModes.filter((mode)=>allowed.includes(mode.value))
+	return !allowed?.length ? videoModes.slice(0,3) : videoModes.filter((mode)=>allowed.includes(mode.value))
 })
-const referenceLimit = computed(() => activeType.value === "image" ? 3 : videoMode.value === "frames" ? 2 : videoMode.value === "reference" ? 12 : 0)
+const referenceLimit = computed(() => activeType.value === "image" ? 3 : videoMode.value === "frames" ? 2 : videoMode.value === "reference" ? 12 : videoMode.value === "text" ? 0 : 12)
 const referenceAccept = computed(() => activeType.value === "image" || videoMode.value === "frames"
   ? "image/jpeg,image/png,image/webp"
   : "image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/flac")
@@ -116,6 +120,10 @@ const referenceHint = computed(() => {
   if (activeType.value === "image") return "最多 3 张图片"
   if (videoMode.value === "frames") return "首帧与尾帧"
   if (videoMode.value === "reference") return "图片、视频或音频"
+	if(videoMode.value==="extend")return "选择需要延长的视频"
+	if(videoMode.value==="lip_sync")return "选择视频和音频"
+	if(videoMode.value==="edit")return "选择需要编辑的视频"
+	if(videoMode.value==="motion_transfer")return "选择人物图片和动作视频"
   return "无需上传素材"
 })
 const hasGeneratingRecentWorks = computed(() => recentWorks.value.some((work) => work.status === "generating"))
@@ -182,6 +190,9 @@ async function startCreation() {
     notification.info("参考音频需要同时添加至少一张图片或一个视频")
     return
   }
+	if(activeType.value==="video"&&videoMode.value==="lip_sync"&&(!references.value.some((item)=>item.kind==="video")||!references.value.some((item)=>item.kind==="audio"))){notification.info("对口型需要同时选择视频和音频");return}
+	if(activeType.value==="video"&&["extend","edit"].includes(videoMode.value)&&!references.value.some((item)=>item.kind==="video")){notification.info("请选择一个视频素材");return}
+	if(activeType.value==="video"&&videoMode.value==="motion_transfer"&&(!references.value.some((item)=>item.kind==="video")||!references.value.some((item)=>item.kind==="image"))){notification.info("动作迁移需要人物图片和动作视频");return}
   if (!selectedModel.value) {
     notification.warning(`当前没有可用的${activeType.value === "video" ? "视频" : "图片"}模型，请联系管理员配置模型渠道`)
     return
@@ -291,6 +302,9 @@ function roleForReference(kind: ReferenceKind): VideoReferenceRole | "" {
 
 function referenceKindAllowed(kind: ReferenceKind) {
 	if ((activeType.value === "image" || videoMode.value === "frames") && kind !== "image") return false
+	if(["extend","edit"].includes(videoMode.value)&&kind!=="video")return false
+	if(videoMode.value==="lip_sync"&&kind==="image")return false
+	if(videoMode.value==="motion_transfer"&&kind==="audio")return false
 	const maximum = { image: videoMode.value === "reference" ? 9 : referenceLimit.value, video: 3, audio: 3 }[kind]
 	return references.value.filter((reference) => reference.kind === kind).length < maximum && references.value.length < referenceLimit.value
 }
@@ -464,7 +478,7 @@ async function useSameParameters(asset: assetApi.Asset, notify = true) {
     selectedDuration.value = task.requestedDurationSeconds || 5
     soundEnabled.value = task.soundEnabled
     watermarkEnabled.value = task.watermarkEnabled
-    videoMode.value = task.videoMode === "frames" || task.videoMode === "reference" ? task.videoMode : "text"
+    videoMode.value = availableVideoModes.value.some((mode)=>mode.value===task.videoMode) ? task.videoMode as VideoGenerationMode : "text"
   }
 	const taskReferences=task.references||[]
 	const restored=await Promise.all(taskReferences.map(async(reference)=>{

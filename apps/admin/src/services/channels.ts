@@ -9,6 +9,9 @@ export type ChannelModel = {
   enabled: boolean
   sortOrder: number
   capabilityConfig: ModelCapabilityConfig
+  capabilityOverride: boolean
+  isBuiltIn: boolean
+  officialCapabilityConfig: ModelCapabilityConfig
   createdAt: string
   updatedAt: string
 }
@@ -50,9 +53,11 @@ export type ModelInput = {
   enabled: boolean
   sortOrder: number
   capabilityConfig: ModelCapabilityConfig
+  capabilityOverride: boolean
 }
 
-export type ModelCapabilityConfig = { ratios:string[];qualities:string[];minDuration:number;maxDuration:number;modes:string[];supportsSound:boolean;supportsWatermark:boolean }
+export type ModeOperationConfig={createPath?:string;queryPath?:string;cancelPath?:string;cancelMethod?:string;requestTemplate?:string;resultField?:string;statusField?:string}
+export type ModelCapabilityConfig = { ratios:string[];qualities:string[];minDuration:number;maxDuration:number;modes:string[];supportsSound:boolean;supportsWatermark:boolean;modeOperations?:Record<string,ModeOperationConfig> }
 
 export type ModelCapability = "text" | "image" | "video" | "audio"
 export type ChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "compshare-minimax-h3" | "custom" | "compatible"

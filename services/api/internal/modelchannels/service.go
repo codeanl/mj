@@ -47,7 +47,7 @@ func (service *Service) ResolveCandidates(ctx context.Context, capability, model
 		if apiKey == "" && advanced.AuthMode != "none" {
 			continue
 		}
-		resolved = append(resolved, ResolvedModel{ChannelID: pair.Channel.ID, BaseURL: pair.Channel.BaseURL, APIKey: apiKey, Protocol: pair.Channel.Protocol, AdvancedConfig: advanced, UpstreamModel: pair.Model.ModelID, Priority: pair.Channel.Priority, Weight: pair.Channel.Weight, MaxConcurrency: pair.Channel.MaxConcurrency, TimeoutSeconds: pair.Channel.TimeoutSeconds, PollIntervalSeconds: advanced.PollIntervalSeconds})
+		resolved = append(resolved, ResolvedModel{ChannelID: pair.Channel.ID, BaseURL: pair.Channel.BaseURL, APIKey: apiKey, Protocol: pair.Channel.Protocol, AdvancedConfig: advanced, UpstreamModel: pair.Model.ModelID, Priority: pair.Channel.Priority, Weight: pair.Channel.Weight, MaxConcurrency: pair.Channel.MaxConcurrency, TimeoutSeconds: pair.Channel.TimeoutSeconds, PollIntervalSeconds: advanced.PollIntervalSeconds, CapabilityConfig: pair.Model.CapabilityConfig})
 	}
 	if len(resolved) == 0 {
 		return nil, ErrChannelDisabled
@@ -150,18 +150,29 @@ func (service *Service) Delete(ctx context.Context, id string) error {
 }
 
 func (service *Service) CreateModel(ctx context.Context, channelID string, input ModelInput) (Model, error) {
-	input, err := normalizeModelInput(input)
+	channel, err := service.repository.Find(ctx, channelID)
+	if err != nil {
+		return Model{}, err
+	}
+	if official, ok := officialModelConfig(channel.Protocol, input.ModelID); ok && !input.CapabilityOverride {
+		input.CapabilityConfig = official
+	}
+	input, err = normalizeModelInput(input)
 	if err != nil {
 		return Model{}, ErrInvalidModel
-	}
-	if _, err := service.repository.Find(ctx, channelID); err != nil {
-		return Model{}, err
 	}
 	return service.repository.CreateModel(ctx, channelID, input)
 }
 
 func (service *Service) UpdateModel(ctx context.Context, channelID, id string, input ModelInput) (Model, error) {
-	input, err := normalizeModelInput(input)
+	channel, err := service.repository.Find(ctx, channelID)
+	if err != nil {
+		return Model{}, err
+	}
+	if official, ok := officialModelConfig(channel.Protocol, input.ModelID); ok && !input.CapabilityOverride {
+		input.CapabilityConfig = official
+	}
+	input, err = normalizeModelInput(input)
 	if err != nil {
 		return Model{}, ErrInvalidModel
 	}
@@ -200,7 +211,7 @@ func (service *Service) ResolveModel(ctx context.Context, capability, channelID,
 	if apiKey == "" && channel.AdvancedConfig.AuthMode != "none" {
 		return ResolvedModel{}, ErrChannelDisabled
 	}
-	return ResolvedModel{ChannelID: channel.ID, BaseURL: channel.BaseURL, APIKey: apiKey, Protocol: channel.Protocol, AdvancedConfig: channel.AdvancedConfig, UpstreamModel: model.ModelID, Priority: channel.Priority, Weight: channel.Weight, MaxConcurrency: channel.MaxConcurrency, TimeoutSeconds: channel.TimeoutSeconds, PollIntervalSeconds: channel.AdvancedConfig.PollIntervalSeconds}, nil
+	return ResolvedModel{ChannelID: channel.ID, BaseURL: channel.BaseURL, APIKey: apiKey, Protocol: channel.Protocol, AdvancedConfig: channel.AdvancedConfig, UpstreamModel: model.ModelID, Priority: channel.Priority, Weight: channel.Weight, MaxConcurrency: channel.MaxConcurrency, TimeoutSeconds: channel.TimeoutSeconds, PollIntervalSeconds: channel.AdvancedConfig.PollIntervalSeconds, CapabilityConfig: model.CapabilityConfig}, nil
 }
 
 func (service *Service) TestConnection(ctx context.Context, id string, persistModels bool) (ConnectionResult, error) {
@@ -419,6 +430,23 @@ func normalizeModelInput(input ModelInput) (ModelInput, error) {
 		if input.CapabilityConfig.MinDuration > input.CapabilityConfig.MaxDuration || input.CapabilityConfig.MaxDuration > 3600 || len(input.CapabilityConfig.Ratios) > 30 || len(input.CapabilityConfig.Qualities) > 30 || len(input.CapabilityConfig.Modes) > 10 {
 			return ModelInput{}, ErrInvalidModel
 		}
+		for _, mode := range input.CapabilityConfig.Modes {
+			if mode != "text" && mode != "frames" && mode != "reference" && mode != "extend" && mode != "lip_sync" && mode != "edit" && mode != "motion_transfer" {
+				return ModelInput{}, ErrInvalidModel
+			}
+			if mode == "extend" || mode == "lip_sync" || mode == "edit" || mode == "motion_transfer" {
+				operation := input.CapabilityConfig.ModeOperations[mode]
+				if strings.TrimSpace(operation.CreatePath) == "" || strings.TrimSpace(operation.QueryPath) == "" {
+					return ModelInput{}, ErrInvalidModel
+				}
+				if strings.TrimSpace(operation.RequestTemplate) != "" {
+					var template interface{}
+					if json.Unmarshal([]byte(operation.RequestTemplate), &template) != nil {
+						return ModelInput{}, ErrInvalidModel
+					}
+				}
+			}
+		}
 	}
 	if input.ModelID == "" || utf8.RuneCountInString(input.ModelID) > 120 || utf8.RuneCountInString(input.DisplayName) > 120 || !validCapability(input.Capability) || input.SortOrder < 0 {
 		return ModelInput{}, ErrInvalidModel
@@ -429,11 +457,37 @@ func normalizeModelInput(input ModelInput) (ModelInput, error) {
 func decorateChannel(channel *Channel, cipher SecretCipher) {
 	if definition, ok := FindProtocolDefinition(channel.Protocol); ok {
 		channel.AdvancedConfig = normalizeAdvancedConfig(channel.AdvancedConfig, definition)
+		for index := range channel.Models {
+			if official, exists := officialModelConfig(channel.Protocol, channel.Models[index].ModelID); exists {
+				channel.Models[index].IsBuiltIn = true
+				channel.Models[index].OfficialCapabilityConfig = official
+				if !channel.Models[index].CapabilityOverride {
+					channel.Models[index].CapabilityConfig = official
+				}
+			}
+		}
 	}
 	key, err := cipher.Decrypt(channel.apiKeyCiphertext)
 	channel.HasAPIKey = err == nil && key != ""
 	channel.APIKeyMasked = maskAPIKey(key)
 	channel.apiKeyCiphertext = ""
+}
+
+func officialModelConfig(protocol, modelID string) (ModelCapabilityConfig, bool) {
+	definition, ok := FindProtocolDefinition(protocol)
+	if !ok {
+		return ModelCapabilityConfig{}, false
+	}
+	for _, model := range definition.BuiltInModels {
+		if strings.EqualFold(model.ID, modelID) && hasOfficialCapabilityConfig(model.CapabilityConfig) {
+			return model.CapabilityConfig, true
+		}
+	}
+	return ModelCapabilityConfig{}, false
+}
+
+func hasOfficialCapabilityConfig(config ModelCapabilityConfig) bool {
+	return len(config.Ratios) > 0 || len(config.Qualities) > 0 || config.MinDuration > 0 || config.MaxDuration > 0 || len(config.Modes) > 0 || len(config.ModeOperations) > 0
 }
 
 func maskAPIKey(key string) string {

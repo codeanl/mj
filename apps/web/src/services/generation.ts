@@ -55,7 +55,7 @@ export async function createImageGeneration(input: { requestId: string; prompt: 
   return response.data.data
 }
 
-export type VideoGenerationMode = "text" | "frames" | "reference"
+export type VideoGenerationMode = "text" | "frames" | "reference" | "extend" | "lip_sync" | "edit" | "motion_transfer"
 export type VideoReferenceRole = "first_frame" | "last_frame" | "reference_image" | "reference_video" | "reference_audio"
 
 export async function createVideoGeneration(input:{requestId:string;prompt:string;model:string;size:string;quality:string;durationSeconds:number;soundEnabled:boolean;watermarkEnabled:boolean;mode:VideoGenerationMode;references?:Array<{assetId:string;role:VideoReferenceRole}>}){

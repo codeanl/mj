@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue"
+import { computed, onMounted, reactive, ref, watch } from "vue"
 import { ElButton, ElDialog, ElInput, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus"
 import "element-plus/dist/index.css"
 import { ArrowLeft, Check, CheckCircle2, CircleAlert, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Search, Settings2, Trash2, XCircle } from "@lucide/vue"
@@ -23,8 +23,12 @@ const modelDialogOpen = ref(false)
 const editingModelId = ref("")
 
 const routingDefaults = { priority: 100, weight: 100, maxConcurrency: 4, timeoutSeconds: 300, failureThreshold: 3, cooldownSeconds: 60 }
+const specialModeTemplatePlaceholder = '{"model":"{{model}}","prompt":"{{prompt}}","video":"{{video}}","duration":"{{duration}}"}'
 const channelForm = reactive<channelApi.ChannelInput>({ name: "", baseUrl: "", protocol: "openai", apiKey: "", enabled: false, advancedConfig: emptyAdvancedConfig(), ...routingDefaults })
-const modelForm = reactive<channelApi.ModelInput>({ modelId: "", displayName: "", capability: "image", enabled: true, sortOrder: 0, capabilityConfig: emptyModelCapabilityConfig() })
+const modelForm = reactive<channelApi.ModelInput>({ modelId: "", displayName: "", capability: "image", enabled: true, sortOrder: 0, capabilityConfig: emptyModelCapabilityConfig(), capabilityOverride: false })
+const editingModel = computed(()=>editingChannel.value?.models.find((model)=>model.id===editingModelId.value))
+const capabilityReadonly=computed(()=>Boolean(editingModel.value?.isBuiltIn&&!modelForm.capabilityOverride))
+watch(()=>modelForm.capabilityConfig.modes,(modes)=>{modelForm.capabilityConfig.modeOperations ||= {};for(const mode of modes)if(["extend","lip_sync","edit","motion_transfer"].includes(mode))modelForm.capabilityConfig.modeOperations[mode] ||= {}},{deep:true})
 
 const editingChannel = computed(() => channels.value.find((channel) => channel.id === editingId.value))
 const imageModels=computed(()=>Array.from(new Set(channels.value.flatMap(channel=>channel.models.filter(model=>model.capability==="image"&&model.enabled).map(model=>model.modelId)))))
@@ -172,6 +176,7 @@ function openModel(model?: channelApi.ChannelModel) {
     enabled: model?.enabled ?? true,
     sortOrder: model?.sortOrder ?? (editingChannel.value?.models.length || 0),
     capabilityConfig: model ? { ...emptyModelCapabilityConfig(), ...cloneData(model.capabilityConfig) } : emptyModelCapabilityConfig(),
+	capabilityOverride: model?.capabilityOverride || false,
   })
   modelDialogOpen.value = true
 }
@@ -191,6 +196,17 @@ async function saveModel() {
   } finally {
     saving.value = false
   }
+}
+
+function toggleCapabilityOverride(enabled:boolean){
+	modelForm.capabilityOverride=enabled
+	if(!enabled&&editingModel.value?.isBuiltIn)modelForm.capabilityConfig=cloneData(editingModel.value.officialCapabilityConfig)
+}
+
+function restoreOfficialCapability(){
+	if(!editingModel.value?.isBuiltIn)return
+	modelForm.capabilityConfig=cloneData(editingModel.value.officialCapabilityConfig)
+	modelForm.capabilityOverride=false
 }
 
 async function removeModel(model: channelApi.ChannelModel) {
@@ -236,7 +252,7 @@ function emptyAdvancedConfig(): channelApi.AdvancedConfig {
 }
 
 function emptyModelCapabilityConfig(): channelApi.ModelCapabilityConfig {
-  return { ratios: ["adaptive","16:9","9:16","1:1"], qualities: ["480P","768P","1080P"], minDuration: 4, maxDuration: 30, modes: ["text","frames","reference"], supportsSound: true, supportsWatermark: true }
+  return { ratios: ["adaptive","16:9","9:16","1:1"], qualities: ["480P","768P","1080P"], minDuration: 4, maxDuration: 30, modes: ["text","frames","reference"], supportsSound: true, supportsWatermark: true,modeOperations:{} }
 }
 
 function cloneData<T>(value: T): T {
@@ -363,13 +379,15 @@ function messageOf(error: unknown, fallback: string) {
         <label><span>模型能力</span><ElSelect v-model="modelForm.capability"><ElOption label="文本" value="text" /><ElOption label="图片" value="image" /><ElOption label="视频" value="video" /><ElOption label="音频" value="audio" /></ElSelect></label>
         <label><span>排序</span><ElInput v-model.number="modelForm.sortOrder" type="number" min="0" /></label>
 		<template v-if="modelForm.capability === 'video'">
-		  <label class="channel-form-wide"><span>支持比例</span><ElSelect v-model="modelForm.capabilityConfig.ratios" multiple collapse-tags><ElOption v-for="value in ['adaptive','21:9','16:9','4:3','1:1','3:4','9:16']" :key="value" :label="value === 'adaptive' ? '自适应' : value" :value="value" /></ElSelect></label>
-		  <label class="channel-form-wide"><span>支持清晰度</span><ElSelect v-model="modelForm.capabilityConfig.qualities" multiple collapse-tags><ElOption v-for="value in ['480P','768P','1080P','2K','4K']" :key="value" :label="value" :value="value" /></ElSelect></label>
-		  <label><span>最短时长（秒）</span><ElInputNumber v-model="modelForm.capabilityConfig.minDuration" :min="1" :max="3600" /></label>
-		  <label><span>最长时长（秒）</span><ElInputNumber v-model="modelForm.capabilityConfig.maxDuration" :min="1" :max="3600" /></label>
-		  <label class="channel-form-wide"><span>生成模式</span><ElSelect v-model="modelForm.capabilityConfig.modes" multiple><ElOption label="文生视频" value="text" /><ElOption label="首尾帧" value="frames" /><ElOption label="全能参考" value="reference" /></ElSelect></label>
-		  <label class="channel-switch-row"><span><strong>支持声音</strong><small>允许客户端开启或关闭生成声音。</small></span><ElSwitch v-model="modelForm.capabilityConfig.supportsSound" /></label>
-		  <label class="channel-switch-row"><span><strong>支持水印</strong><small>允许客户端选择是否添加水印。</small></span><ElSwitch v-model="modelForm.capabilityConfig.supportsWatermark" /></label>
+		  <div v-if="editingModel?.isBuiltIn" class="channel-form-wide channel-switch-row"><span><strong>官方能力</strong><small>{{ modelForm.capabilityOverride ? '当前使用管理员覆盖；恢复后跟随系统内置能力。' : '当前使用系统内置官方能力。' }}</small></span><span><ElButton v-if="modelForm.capabilityOverride" size="small" @click="restoreOfficialCapability">恢复默认</ElButton><ElSwitch :model-value="modelForm.capabilityOverride" active-text="自定义能力" @change="toggleCapabilityOverride(Boolean($event))" /></span></div>
+		  <label class="channel-form-wide"><span>支持比例</span><ElSelect v-model="modelForm.capabilityConfig.ratios" multiple collapse-tags :disabled="capabilityReadonly"><ElOption v-for="value in ['adaptive','21:9','16:9','4:3','1:1','3:4','9:16']" :key="value" :label="value === 'adaptive' ? '自适应' : value" :value="value" /></ElSelect></label>
+		  <label class="channel-form-wide"><span>支持清晰度</span><ElSelect v-model="modelForm.capabilityConfig.qualities" multiple collapse-tags :disabled="capabilityReadonly"><ElOption v-for="value in ['480P','768P','1080P','2K','4K']" :key="value" :label="value" :value="value" /></ElSelect></label>
+		  <label><span>最短时长（秒）</span><ElInputNumber v-model="modelForm.capabilityConfig.minDuration" :min="1" :max="3600" :disabled="capabilityReadonly" /></label>
+		  <label><span>最长时长（秒）</span><ElInputNumber v-model="modelForm.capabilityConfig.maxDuration" :min="1" :max="3600" :disabled="capabilityReadonly" /></label>
+		  <label class="channel-form-wide"><span>生成模式</span><ElSelect v-model="modelForm.capabilityConfig.modes" multiple :disabled="capabilityReadonly"><ElOption label="文生视频" value="text" /><ElOption label="首尾帧" value="frames" /><ElOption label="全能参考" value="reference" /><ElOption label="视频延长" value="extend" /><ElOption label="对口型" value="lip_sync" /><ElOption label="视频编辑" value="edit" /><ElOption label="动作迁移" value="motion_transfer" /></ElSelect></label>
+		  <label class="channel-switch-row"><span><strong>支持声音</strong><small>允许客户端开启或关闭生成声音。</small></span><ElSwitch v-model="modelForm.capabilityConfig.supportsSound" :disabled="capabilityReadonly" /></label>
+		  <label class="channel-switch-row"><span><strong>支持水印</strong><small>允许客户端选择是否添加水印。</small></span><ElSwitch v-model="modelForm.capabilityConfig.supportsWatermark" :disabled="capabilityReadonly" /></label>
+		  <details v-if="modelForm.capabilityOverride && modelForm.capabilityConfig.modes.some((mode)=>['extend','lip_sync','edit','motion_transfer'].includes(mode))" class="channel-advanced channel-form-wide"><summary><Settings2 :size="14" />特殊能力接口</summary><div class="channel-advanced-grid"><template v-for="mode in modelForm.capabilityConfig.modes.filter((value)=>['extend','lip_sync','edit','motion_transfer'].includes(value))" :key="mode"><label><span>{{ {extend:'视频延长',lip_sync:'对口型',edit:'视频编辑',motion_transfer:'动作迁移'}[mode] }}创建路径</span><ElInput v-model="modelForm.capabilityConfig.modeOperations![mode].createPath" placeholder="/videos/extend" /></label><label><span>查询路径</span><ElInput v-model="modelForm.capabilityConfig.modeOperations![mode].queryPath" placeholder="/tasks/:task_id" /></label><label><span>状态字段</span><ElInput v-model="modelForm.capabilityConfig.modeOperations![mode].statusField" placeholder="data.status" /></label><label><span>结果字段</span><ElInput v-model="modelForm.capabilityConfig.modeOperations![mode].resultField" placeholder="data.video_url" /></label><label><span>取消路径</span><ElInput v-model="modelForm.capabilityConfig.modeOperations![mode].cancelPath" placeholder="/tasks/:task_id/cancel" /></label><label><span>取消方式</span><ElSelect v-model="modelForm.capabilityConfig.modeOperations![mode].cancelMethod"><ElOption label="POST" value="POST" /><ElOption label="DELETE" value="DELETE" /></ElSelect></label><label class="channel-form-wide"><span>创建请求模板</span><ElInput v-model="modelForm.capabilityConfig.modeOperations![mode].requestTemplate" type="textarea" :rows="4" :placeholder="specialModeTemplatePlaceholder" /><small>支持 model、operation、prompt、ratio、resolution、duration、generate_audio、watermark、content、images、videos、audios、image、video、audio 变量。</small></label></template></div></details>
 		</template>
         <label class="channel-switch-row"><span><strong>启用模型</strong><small>启用后会进入对应能力工作台的模型目录。</small></span><ElSwitch v-model="modelForm.enabled" /></label>
       </div>
