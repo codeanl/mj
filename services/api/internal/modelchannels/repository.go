@@ -167,21 +167,23 @@ func (repository *Repository) SaveHealthCheck(ctx context.Context, id string, su
 
 func (repository *Repository) CreateModel(ctx context.Context, channelID string, input ModelInput) (Model, error) {
 	id := uuid.NewString()
+	capabilityConfig, _ := json.Marshal(input.CapabilityConfig)
 	model, err := scanModel(repository.pool.QueryRow(ctx, `
-		INSERT INTO channel_models (id, channel_id, model_id, display_name, capability, enabled, sort_order)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id::text, channel_id::text, model_id, display_name, capability, enabled, sort_order, created_at, updated_at
-	`, id, channelID, input.ModelID, input.DisplayName, input.Capability, input.Enabled, input.SortOrder))
+		INSERT INTO channel_models (id, channel_id, model_id, display_name, capability, enabled, sort_order,capability_config)
+		VALUES ($1, $2, $3, $4, $5, $6, $7,$8::jsonb)
+		RETURNING id::text, channel_id::text, model_id, display_name, capability, enabled, sort_order,capability_config,created_at, updated_at
+	`, id, channelID, input.ModelID, input.DisplayName, input.Capability, input.Enabled, input.SortOrder, capabilityConfig))
 	return model, modelConflict(err)
 }
 
 func (repository *Repository) UpdateModel(ctx context.Context, channelID, id string, input ModelInput) (Model, error) {
+	capabilityConfig, _ := json.Marshal(input.CapabilityConfig)
 	model, err := scanModel(repository.pool.QueryRow(ctx, `
 		UPDATE channel_models
-		SET model_id = $3, display_name = $4, capability = $5, enabled = $6, sort_order = $7, updated_at = now()
+		SET model_id = $3, display_name = $4, capability = $5, enabled = $6, sort_order = $7,capability_config=$8::jsonb,updated_at = now()
 		WHERE id = $1 AND channel_id = $2
-		RETURNING id::text, channel_id::text, model_id, display_name, capability, enabled, sort_order, created_at, updated_at
-	`, id, channelID, input.ModelID, input.DisplayName, input.Capability, input.Enabled, input.SortOrder))
+		RETURNING id::text, channel_id::text, model_id, display_name, capability, enabled, sort_order,capability_config,created_at, updated_at
+	`, id, channelID, input.ModelID, input.DisplayName, input.Capability, input.Enabled, input.SortOrder, capabilityConfig))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Model{}, ErrModelNotFound
 	}
@@ -202,11 +204,12 @@ func (repository *Repository) DeleteModel(ctx context.Context, channelID, id str
 func (repository *Repository) UpsertDiscoveredModels(ctx context.Context, channelID string, models []BuiltInModel) error {
 	batch := &pgx.Batch{}
 	for index, model := range models {
+		capabilityConfig, _ := json.Marshal(model.CapabilityConfig)
 		batch.Queue(`
-			INSERT INTO channel_models (channel_id, model_id, display_name, capability, enabled, sort_order)
-			VALUES ($1, $2, $3, $4, true, $5)
-			ON CONFLICT (channel_id, lower(model_id)) DO UPDATE SET display_name = EXCLUDED.display_name, capability = EXCLUDED.capability, updated_at = now()
-		`, channelID, model.ID, model.Label, model.Capability, index)
+			INSERT INTO channel_models (channel_id, model_id, display_name, capability, enabled, sort_order,capability_config)
+			VALUES ($1, $2, $3, $4, true, $5,$6::jsonb)
+			ON CONFLICT (channel_id, lower(model_id)) DO UPDATE SET display_name = EXCLUDED.display_name, capability = EXCLUDED.capability,capability_config=CASE WHEN EXCLUDED.capability_config='{}'::jsonb THEN channel_models.capability_config ELSE EXCLUDED.capability_config END,updated_at = now()
+		`, channelID, model.ID, model.Label, model.Capability, index, capabilityConfig)
 	}
 	results := repository.pool.SendBatch(ctx, batch)
 	defer results.Close()
@@ -220,9 +223,9 @@ func (repository *Repository) UpsertDiscoveredModels(ctx context.Context, channe
 
 func (repository *Repository) ListPublicModels(ctx context.Context, capability string) ([]PublicModel, error) {
 	rows, err := repository.pool.Query(ctx, `
-		SELECT selected.model_id, selected.display_name, selected.capability
+		SELECT selected.model_id, selected.display_name, selected.capability,selected.capability_config
 		FROM (
-			SELECT DISTINCT ON (lower(model.model_id)) model.model_id, model.display_name, model.capability,
+			SELECT DISTINCT ON (lower(model.model_id)) model.model_id, model.display_name, model.capability,model.capability_config,
 			       model.sort_order, model.created_at
 			FROM channel_models model
 			JOIN model_channels channel ON channel.id = model.channel_id
@@ -239,7 +242,11 @@ func (repository *Repository) ListPublicModels(ctx context.Context, capability s
 	models := make([]PublicModel, 0)
 	for rows.Next() {
 		var model PublicModel
-		if err := rows.Scan(&model.ID, &model.DisplayName, &model.Capability); err != nil {
+		var capabilityConfig []byte
+		if err := rows.Scan(&model.ID, &model.DisplayName, &model.Capability, &capabilityConfig); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(capabilityConfig, &model.CapabilityConfig); err != nil {
 			return nil, err
 		}
 		models = append(models, model)
@@ -257,12 +264,12 @@ func (repository *Repository) ResolveModel(ctx context.Context, capability, chan
 		       channel.last_test_status, channel.last_test_message, channel.last_tested_at, channel.created_at, channel.updated_at,
 		       channel.priority, channel.weight, channel.max_concurrency, channel.request_timeout_seconds, channel.failure_threshold, channel.cooldown_seconds,
 		       channel.active_requests, channel.consecutive_failures, channel.cooldown_until, channel.last_runtime_error, channel.last_runtime_at, channel.last_latency_ms,
-		       model.id::text, model.channel_id::text, model.model_id, model.display_name, model.capability, model.enabled, model.sort_order, model.created_at, model.updated_at
+		       model.id::text, model.channel_id::text, model.model_id, model.display_name, model.capability, model.enabled, model.sort_order,model.capability_config,model.created_at, model.updated_at
 		FROM channel_models model
 		JOIN model_channels channel ON channel.id = model.channel_id
 		WHERE lower(model.model_id) = lower($1)
 		  AND ($2 = '' OR channel.id = NULLIF($2, '')::uuid)
-		  AND channel.enabled = true AND model.enabled = true AND model.capability = $3
+		  AND (($2 = '' AND channel.enabled = true AND model.enabled = true) OR $2 <> '') AND model.capability = $3
 		LIMIT 1
 	`, modelID, channelID, capability)
 	channel, model, err := scanResolvedModel(row)
@@ -288,7 +295,7 @@ func (repository *Repository) ResolveModels(ctx context.Context, capability, mod
 		       channel.last_test_status, channel.last_test_message, channel.last_tested_at, channel.created_at, channel.updated_at,
 		       channel.priority, channel.weight, channel.max_concurrency, channel.request_timeout_seconds, channel.failure_threshold, channel.cooldown_seconds,
 		       channel.active_requests, channel.consecutive_failures, channel.cooldown_until, channel.last_runtime_error, channel.last_runtime_at, channel.last_latency_ms,
-		       model.id::text, model.channel_id::text, model.model_id, model.display_name, model.capability, model.enabled, model.sort_order, model.created_at, model.updated_at
+		       model.id::text, model.channel_id::text, model.model_id, model.display_name, model.capability, model.enabled, model.sort_order,model.capability_config,model.created_at, model.updated_at
 		FROM channel_models model JOIN model_channels channel ON channel.id = model.channel_id
 		WHERE lower(model.model_id) = lower($1) AND channel.enabled AND model.enabled AND model.capability = $2
 		  AND (channel.cooldown_until IS NULL OR channel.cooldown_until <= now())
@@ -320,6 +327,11 @@ func (repository *Repository) TryAcquire(ctx context.Context, channelID string) 
 	return err == nil && result.RowsAffected() == 1, err
 }
 
+func (repository *Repository) TryAcquirePinned(ctx context.Context, channelID string) (bool, error) {
+	result, err := repository.pool.Exec(ctx, `UPDATE model_channels SET active_requests = active_requests + 1 WHERE id = $1 AND active_requests < max_concurrency`, channelID)
+	return err == nil && result.RowsAffected() == 1, err
+}
+
 func (repository *Repository) Release(ctx context.Context, channelID string, success bool, latencyMS int64, message string) error {
 	_, err := repository.pool.Exec(ctx, `
 		UPDATE model_channels SET active_requests = greatest(active_requests - 1, 0), last_runtime_at = now(), last_latency_ms = $3,
@@ -334,23 +346,26 @@ func (repository *Repository) Release(ctx context.Context, channelID string, suc
 func scanResolvedModel(row rowScanner) (Channel, Model, error) {
 	var channel Channel
 	var model Model
-	var advanced []byte
+	var advanced, capabilityConfig []byte
 	err := row.Scan(
 		&channel.ID, &channel.Name, &channel.BaseURL, &channel.Protocol, &advanced, &channel.apiKeyCiphertext, &channel.Enabled,
 		&channel.LastTestStatus, &channel.LastTestMessage, &channel.LastTestedAt, &channel.CreatedAt, &channel.UpdatedAt,
 		&channel.Priority, &channel.Weight, &channel.MaxConcurrency, &channel.TimeoutSeconds, &channel.FailureThreshold, &channel.CooldownSeconds,
 		&channel.ActiveRequests, &channel.ConsecutiveFailures, &channel.CooldownUntil, &channel.LastRuntimeError, &channel.LastRuntimeAt, &channel.LastLatencyMs,
-		&model.ID, &model.ChannelID, &model.ModelID, &model.DisplayName, &model.Capability, &model.Enabled, &model.SortOrder, &model.CreatedAt, &model.UpdatedAt,
+		&model.ID, &model.ChannelID, &model.ModelID, &model.DisplayName, &model.Capability, &model.Enabled, &model.SortOrder, &capabilityConfig, &model.CreatedAt, &model.UpdatedAt,
 	)
 	if err == nil {
 		err = json.Unmarshal(advanced, &channel.AdvancedConfig)
+	}
+	if err == nil {
+		err = json.Unmarshal(capabilityConfig, &model.CapabilityConfig)
 	}
 	return channel, model, err
 }
 
 func (repository *Repository) listModels(ctx context.Context, channelID string) ([]Model, error) {
 	rows, err := repository.pool.Query(ctx, `
-		SELECT id::text, channel_id::text, model_id, display_name, capability, enabled, sort_order, created_at, updated_at
+		SELECT id::text, channel_id::text, model_id, display_name, capability, enabled, sort_order,capability_config,created_at, updated_at
 		FROM channel_models
 		WHERE ($1 = '' OR channel_id = NULLIF($1, '')::uuid)
 		ORDER BY sort_order ASC, created_at ASC, id ASC
@@ -391,7 +406,11 @@ func scanChannel(row rowScanner) (Channel, error) {
 
 func scanModel(row rowScanner) (Model, error) {
 	var model Model
-	err := row.Scan(&model.ID, &model.ChannelID, &model.ModelID, &model.DisplayName, &model.Capability, &model.Enabled, &model.SortOrder, &model.CreatedAt, &model.UpdatedAt)
+	var capabilityConfig []byte
+	err := row.Scan(&model.ID, &model.ChannelID, &model.ModelID, &model.DisplayName, &model.Capability, &model.Enabled, &model.SortOrder, &capabilityConfig, &model.CreatedAt, &model.UpdatedAt)
+	if err == nil {
+		err = json.Unmarshal(capabilityConfig, &model.CapabilityConfig)
+	}
 	return model, err
 }
 

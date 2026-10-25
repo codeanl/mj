@@ -28,6 +28,7 @@ type Config struct {
 	WorkerInterval    time.Duration
 	TaskStale         time.Duration
 	GenerationTimeout time.Duration
+	FFmpegPath        string
 }
 
 func Load() Config {
@@ -51,6 +52,7 @@ func Load() Config {
 		WorkerInterval:    envDuration("GENERATION_WORKER_INTERVAL", 2*time.Second),
 		TaskStale:         envDuration("GENERATION_TASK_STALE", 10*time.Minute),
 		GenerationTimeout: envDuration("GENERATION_REQUEST_TIMEOUT", 5*time.Minute),
+		FFmpegPath:        strings.TrimSpace(os.Getenv("FFMPEG_PATH")),
 	}
 }
 

@@ -12,6 +12,7 @@ type captureRepository struct {
 	lastInput  CreateInput
 	listKind   Kind
 	listSource Source
+	listStatus Status
 	listSearch string
 }
 
@@ -23,9 +24,10 @@ func (repository *captureRepository) Create(_ context.Context, input CreateInput
 	}, nil
 }
 
-func (repository *captureRepository) List(_ context.Context, _ string, kind Kind, source Source, search string, _ int, _ int) (Page, error) {
+func (repository *captureRepository) List(_ context.Context, _ string, kind Kind, source Source, status Status, search string, _ int, _ int) (Page, error) {
 	repository.listKind = kind
 	repository.listSource = source
+	repository.listStatus = status
 	repository.listSearch = search
 	return Page{}, nil
 }
@@ -46,13 +48,13 @@ func TestListValidatesAndPassesSourceFilter(t *testing.T) {
 	}
 	service := NewService(repository, storage)
 
-	if _, err := service.List(context.Background(), "user-1", KindImage, SourceGenerated, "  海报  ", 1, 8); err != nil {
+	if _, err := service.List(context.Background(), "user-1", KindImage, SourceGenerated, StatusReady, "  海报  ", 1, 8); err != nil {
 		t.Fatalf("list generated assets: %v", err)
 	}
-	if repository.listKind != KindImage || repository.listSource != SourceGenerated || repository.listSearch != "海报" {
+	if repository.listKind != KindImage || repository.listSource != SourceGenerated || repository.listStatus != StatusReady || repository.listSearch != "海报" {
 		t.Fatalf("unexpected list filters: kind=%q source=%q search=%q", repository.listKind, repository.listSource, repository.listSearch)
 	}
-	if _, err := service.List(context.Background(), "user-1", "", Source("external"), "", 1, 8); !errors.Is(err, ErrInvalidAsset) {
+	if _, err := service.List(context.Background(), "user-1", "", Source("external"), "", "", 1, 8); !errors.Is(err, ErrInvalidAsset) {
 		t.Fatalf("expected invalid source error, got %v", err)
 	}
 }

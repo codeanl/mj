@@ -33,21 +33,33 @@ type Channel struct {
 }
 
 type Model struct {
-	ID          string    `json:"id"`
-	ChannelID   string    `json:"channelId"`
-	ModelID     string    `json:"modelId"`
-	DisplayName string    `json:"displayName"`
-	Capability  string    `json:"capability"`
-	Enabled     bool      `json:"enabled"`
-	SortOrder   int       `json:"sortOrder"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID               string                `json:"id"`
+	ChannelID        string                `json:"channelId"`
+	ModelID          string                `json:"modelId"`
+	DisplayName      string                `json:"displayName"`
+	Capability       string                `json:"capability"`
+	Enabled          bool                  `json:"enabled"`
+	SortOrder        int                   `json:"sortOrder"`
+	CapabilityConfig ModelCapabilityConfig `json:"capabilityConfig"`
+	CreatedAt        time.Time             `json:"createdAt"`
+	UpdatedAt        time.Time             `json:"updatedAt"`
 }
 
 type PublicModel struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"displayName"`
-	Capability  string `json:"capability"`
+	ID               string                `json:"id"`
+	DisplayName      string                `json:"displayName"`
+	Capability       string                `json:"capability"`
+	CapabilityConfig ModelCapabilityConfig `json:"capabilityConfig"`
+}
+
+type ModelCapabilityConfig struct {
+	Ratios            []string `json:"ratios,omitempty"`
+	Qualities         []string `json:"qualities,omitempty"`
+	MinDuration       int      `json:"minDuration,omitempty"`
+	MaxDuration       int      `json:"maxDuration,omitempty"`
+	Modes             []string `json:"modes,omitempty"`
+	SupportsSound     bool     `json:"supportsSound"`
+	SupportsWatermark bool     `json:"supportsWatermark"`
 }
 
 type OperationConfig struct {
@@ -88,13 +100,15 @@ type AdvancedConfig struct {
 	SupportsReferenceImage bool                       `json:"supportsReferenceImage"`
 	SupportsReferenceVideo bool                       `json:"supportsReferenceVideo"`
 	SupportsReferenceAudio bool                       `json:"supportsReferenceAudio"`
+	PollIntervalSeconds    int                        `json:"pollIntervalSeconds,omitempty"`
 	OperationConfigs       map[string]OperationConfig `json:"operationConfigs,omitempty"`
 }
 
 type BuiltInModel struct {
-	ID         string `json:"id"`
-	Label      string `json:"label"`
-	Capability string `json:"capability"`
+	ID               string                `json:"id"`
+	Label            string                `json:"label"`
+	Capability       string                `json:"capability"`
+	CapabilityConfig ModelCapabilityConfig `json:"capabilityConfig"`
 }
 
 type ProtocolDefinition struct {
@@ -113,16 +127,17 @@ type ProtocolDefinition struct {
 }
 
 type ResolvedModel struct {
-	ChannelID      string
-	BaseURL        string
-	APIKey         string
-	Protocol       string
-	AdvancedConfig AdvancedConfig
-	UpstreamModel  string
-	Priority       int
-	Weight         int
-	MaxConcurrency int
-	TimeoutSeconds int
+	ChannelID           string
+	BaseURL             string
+	APIKey              string
+	Protocol            string
+	AdvancedConfig      AdvancedConfig
+	UpstreamModel       string
+	Priority            int
+	Weight              int
+	MaxConcurrency      int
+	TimeoutSeconds      int
+	PollIntervalSeconds int
 }
 
 type ChannelInput struct {
@@ -142,11 +157,12 @@ type ChannelInput struct {
 }
 
 type ModelInput struct {
-	ModelID     string `json:"modelId"`
-	DisplayName string `json:"displayName"`
-	Capability  string `json:"capability"`
-	Enabled     bool   `json:"enabled"`
-	SortOrder   int    `json:"sortOrder"`
+	ModelID          string                `json:"modelId"`
+	DisplayName      string                `json:"displayName"`
+	Capability       string                `json:"capability"`
+	Enabled          bool                  `json:"enabled"`
+	SortOrder        int                   `json:"sortOrder"`
+	CapabilityConfig ModelCapabilityConfig `json:"capabilityConfig"`
 }
 
 type ConnectionResult struct {

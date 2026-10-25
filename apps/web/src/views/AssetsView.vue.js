@@ -1,12 +1,12 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useDebounceFn, useIntervalFn } from "@vueuse/core";
-import { ChevronLeft, ChevronRight, CircleAlert, Download, Image, Images, LoaderCircle, Music, Play, Plus, RotateCcw, RefreshCcw, Search, Upload, Video, } from "@lucide/vue";
+import { ChevronLeft, ChevronRight, Ban, CircleAlert, Download, Image, Images, LoaderCircle, Music, Play, Plus, RotateCcw, RefreshCcw, Search, Upload, Video, } from "@lucide/vue";
 import * as assetApi from "@/services/assets";
 import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue";
 import { apiErrorMessage } from "@/services/http";
 import { notification } from "@/services/notifications";
-import { checkGenerationTask, retryGenerationTask } from "@/services/generation";
+import { cancelGenerationTask, checkGenerationTask, retryGenerationTask } from "@/services/generation";
 import { useAuthStore } from "@/stores/auth";
 const filters = [
     { value: "all", label: "全部", icon: Images },
@@ -103,7 +103,7 @@ async function loadPreviewUrls(items, sequence) {
             if (existingUrls[asset.id] && existingSignatures[asset.id] === signature) {
                 return { id: asset.id, url: existingUrls[asset.id], signature, created: false };
             }
-            const previewURL = asset.type === "image" ? `${asset.url}${asset.url.includes("?") ? "&" : "?"}thumbnail=1` : asset.url;
+            const previewURL = asset.type === "image" ? `${asset.url}${asset.url.includes("?") ? "&" : "?"}thumbnail=1` : asset.posterUrl || asset.url;
             let blob;
             try {
                 blob = await assetApi.getAssetContent(previewURL);
@@ -181,7 +181,7 @@ async function openAsset(asset) {
     closeAsset();
     selectedAsset.value = asset;
     selectedAssetUrl.value = previewUrls.value[asset.id];
-    if (asset.type !== "image")
+    if (asset.type === "audio")
         return;
     try {
         const original = await assetApi.getAssetContent(asset.url);
@@ -242,6 +242,24 @@ async function checkAsset(asset) {
     }
     catch (error) {
         notification.error(apiErrorMessage(error, "状态检查失败"));
+    }
+    finally {
+        retryingId.value = "";
+    }
+}
+async function cancelAsset(asset) {
+    if (!asset.generationTaskId || retryingId.value)
+        return;
+    retryingId.value = asset.id;
+    try {
+        const result = await cancelGenerationTask(asset.generationTaskId);
+        if (result.pointsRemaining !== undefined)
+            authStore.setPointsBalance(result.pointsRemaining);
+        await loadAssets({ silent: true });
+        notification.success("生成任务已取消，积分已退回");
+    }
+    catch (error) {
+        notification.error(apiErrorMessage(error, "任务取消失败"));
     }
     finally {
         retryingId.value = "";
@@ -488,7 +506,7 @@ else if (assets.value.length) {
             disabled: (asset.status !== 'ready'),
         });
         /** @type {__VLS_StyleScopedClasses['asset-card__preview']} */ ;
-        if (asset.status === 'ready' && previewUrls.value[asset.id] && asset.type === 'image') {
+        if (asset.status === 'ready' && previewUrls.value[asset.id] && (asset.type === 'image' || asset.posterUrl)) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.img)({
                 src: (previewUrls.value[asset.id]),
                 alt: (asset.title),
@@ -719,7 +737,7 @@ else if (assets.value.length) {
         (statusLabel(asset.status));
         (formatDimensions(asset));
         (formatDate(asset.createdAt));
-        if (asset.status === 'failed' && asset.generationTaskId) {
+        if (asset.status === 'generating' && asset.generationTaskId && (asset.generation?.status === 'queued' || asset.generation?.upstreamTaskId)) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
                 ...{ onClick: // @ts-ignore
                     (...[$event]) => {
@@ -728,14 +746,14 @@ else if (assets.value.length) {
                             throw 0;
                         if (!(assets.value.length))
                             throw 0;
-                        if (!(asset.status === 'failed' && asset.generationTaskId))
+                        if (!(asset.status === 'generating' && asset.generationTaskId && (asset.generation?.status === 'queued' || asset.generation?.upstreamTaskId)))
                             throw 0;
-                        return (retryAsset(asset));
+                        return (cancelAsset(asset));
                         // @ts-ignore
                         [previewUrls, previewUrls, previewUrls, previewUrls, previewUrls,];
                     } },
                 type: "button",
-                'aria-label': "重试失败任务",
+                'aria-label': "取消生成任务",
                 disabled: (retryingId.value === asset.id),
             });
             if (retryingId.value === asset.id) {
@@ -755,8 +773,8 @@ else if (assets.value.length) {
             }
             else {
                 let __VLS_83;
-                /** @ts-ignore @type { | typeof __VLS_components.RotateCcw} */
-                RotateCcw;
+                /** @ts-ignore @type { | typeof __VLS_components.Ban} */
+                Ban;
                 // @ts-ignore
                 const __VLS_84 = __VLS_asFunctionalComponent1(__VLS_83, new __VLS_83({
                     // @ts-ignore
@@ -767,7 +785,7 @@ else if (assets.value.length) {
                 }, ...__VLS_functionalComponentArgsRest(__VLS_84));
             }
         }
-        else if (asset.status === 'needs_review' && asset.generationTaskId) {
+        else if (asset.status === 'failed' && asset.generationTaskId) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
                 ...{ onClick: // @ts-ignore
                     (...[$event]) => {
@@ -776,16 +794,16 @@ else if (assets.value.length) {
                             throw 0;
                         if (!(assets.value.length))
                             throw 0;
-                        if (!!(asset.status === 'failed' && asset.generationTaskId))
+                        if (!!(asset.status === 'generating' && asset.generationTaskId && (asset.generation?.status === 'queued' || asset.generation?.upstreamTaskId)))
                             throw 0;
-                        if (!(asset.status === 'needs_review' && asset.generationTaskId))
+                        if (!(asset.status === 'failed' && asset.generationTaskId))
                             throw 0;
-                        return (checkAsset(asset));
+                        return (retryAsset(asset));
                         // @ts-ignore
                         [retryingId, retryingId,];
                     } },
                 type: "button",
-                'aria-label': "检查任务状态",
+                'aria-label': "重试失败任务",
                 disabled: (retryingId.value === asset.id),
             });
             if (retryingId.value === asset.id) {
@@ -805,8 +823,8 @@ else if (assets.value.length) {
             }
             else {
                 let __VLS_93;
-                /** @ts-ignore @type { | typeof __VLS_components.RefreshCcw} */
-                RefreshCcw;
+                /** @ts-ignore @type { | typeof __VLS_components.RotateCcw} */
+                RotateCcw;
                 // @ts-ignore
                 const __VLS_94 = __VLS_asFunctionalComponent1(__VLS_93, new __VLS_93({
                     // @ts-ignore
@@ -817,6 +835,58 @@ else if (assets.value.length) {
                 }, ...__VLS_functionalComponentArgsRest(__VLS_94));
             }
         }
+        else if (asset.status === 'needs_review' && asset.generationTaskId) {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                ...{ onClick: // @ts-ignore
+                    (...[$event]) => {
+                        void $event;
+                        if (!!(loading.value))
+                            throw 0;
+                        if (!(assets.value.length))
+                            throw 0;
+                        if (!!(asset.status === 'generating' && asset.generationTaskId && (asset.generation?.status === 'queued' || asset.generation?.upstreamTaskId)))
+                            throw 0;
+                        if (!!(asset.status === 'failed' && asset.generationTaskId))
+                            throw 0;
+                        if (!(asset.status === 'needs_review' && asset.generationTaskId))
+                            throw 0;
+                        return (checkAsset(asset));
+                        // @ts-ignore
+                        [retryingId, retryingId,];
+                    } },
+                type: "button",
+                'aria-label': "检查任务状态",
+                disabled: (retryingId.value === asset.id),
+            });
+            if (retryingId.value === asset.id) {
+                let __VLS_98;
+                /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
+                LoaderCircle;
+                // @ts-ignore
+                const __VLS_99 = __VLS_asFunctionalComponent1(__VLS_98, new __VLS_98({
+                    // @ts-ignore
+                    ...{ class: "spin" }, size: (16),
+                }));
+                const __VLS_100 = __VLS_99({
+                    ...{ class: "spin" },
+                    size: (16),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_99));
+                /** @type {__VLS_StyleScopedClasses['spin']} */ ;
+            }
+            else {
+                let __VLS_103;
+                /** @ts-ignore @type { | typeof __VLS_components.RefreshCcw} */
+                RefreshCcw;
+                // @ts-ignore
+                const __VLS_104 = __VLS_asFunctionalComponent1(__VLS_103, new __VLS_103({
+                    // @ts-ignore
+                    size: (16),
+                }));
+                const __VLS_105 = __VLS_104({
+                    size: (16),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_104));
+            }
+        }
         else {
             __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
                 ...{ onClick: // @ts-ignore
@@ -825,6 +895,8 @@ else if (assets.value.length) {
                         if (!!(loading.value))
                             throw 0;
                         if (!(assets.value.length))
+                            throw 0;
+                        if (!!(asset.status === 'generating' && asset.generationTaskId && (asset.generation?.status === 'queued' || asset.generation?.upstreamTaskId)))
                             throw 0;
                         if (!!(asset.status === 'failed' && asset.generationTaskId))
                             throw 0;
@@ -838,17 +910,17 @@ else if (assets.value.length) {
                 'aria-label': (`下载 ${asset.title}`),
                 disabled: (asset.status !== 'ready'),
             });
-            let __VLS_98;
+            let __VLS_108;
             /** @ts-ignore @type { | typeof __VLS_components.Download} */
             Download;
             // @ts-ignore
-            const __VLS_99 = __VLS_asFunctionalComponent1(__VLS_98, new __VLS_98({
+            const __VLS_109 = __VLS_asFunctionalComponent1(__VLS_108, new __VLS_108({
                 // @ts-ignore
                 size: (16),
             }));
-            const __VLS_100 = __VLS_99({
+            const __VLS_110 = __VLS_109({
                 size: (16),
-            }, ...__VLS_functionalComponentArgsRest(__VLS_99));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_109));
         }
         // @ts-ignore
         [];
@@ -860,17 +932,17 @@ else {
     });
     /** @type {__VLS_StyleScopedClasses['assets-empty']} */ ;
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
-    let __VLS_103;
+    let __VLS_113;
     /** @ts-ignore @type { | typeof __VLS_components.Upload} */
     Upload;
     // @ts-ignore
-    const __VLS_104 = __VLS_asFunctionalComponent1(__VLS_103, new __VLS_103({
+    const __VLS_114 = __VLS_asFunctionalComponent1(__VLS_113, new __VLS_113({
         // @ts-ignore
         size: (23),
     }));
-    const __VLS_105 = __VLS_104({
+    const __VLS_115 = __VLS_114({
         size: (23),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_104));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_114));
     __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
     __VLS_asFunctionalElement1(__VLS_intrinsics.p, __VLS_intrinsics.p)({});
 }
@@ -896,19 +968,19 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     'aria-label': "上一页",
     disabled: (currentPage.value <= 1),
 });
-let __VLS_108;
+let __VLS_118;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronLeft} */
 ChevronLeft;
 // @ts-ignore
-const __VLS_109 = __VLS_asFunctionalComponent1(__VLS_108, new __VLS_108({
+const __VLS_119 = __VLS_asFunctionalComponent1(__VLS_118, new __VLS_118({
     // @ts-ignore
     size: (17),
 }));
-const __VLS_110 = __VLS_109({
+const __VLS_120 = __VLS_119({
     size: (17),
-}, ...__VLS_functionalComponentArgsRest(__VLS_109));
-const __VLS_113 = __VLS_tryAsConstant((__VLS_unwrap(totalPages, {})));
-for (const [page] of __VLS_vFor(__VLS_nonNull(__VLS_113))) {
+}, ...__VLS_functionalComponentArgsRest(__VLS_119));
+const __VLS_123 = __VLS_tryAsConstant((__VLS_unwrap(totalPages, {})));
+for (const [page] of __VLS_vFor(__VLS_nonNull(__VLS_123))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
         ...{ onClick: // @ts-ignore
             (...[$event]) => {
@@ -939,17 +1011,17 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     'aria-label': "下一页",
     disabled: (currentPage.value >= __VLS_unwrap(totalPages, {})),
 });
-let __VLS_114;
+let __VLS_124;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronRight} */
 ChevronRight;
 // @ts-ignore
-const __VLS_115 = __VLS_asFunctionalComponent1(__VLS_114, new __VLS_114({
+const __VLS_125 = __VLS_asFunctionalComponent1(__VLS_124, new __VLS_124({
     // @ts-ignore
     size: (17),
 }));
-const __VLS_116 = __VLS_115({
+const __VLS_126 = __VLS_125({
     size: (17),
-}, ...__VLS_functionalComponentArgsRest(__VLS_115));
+}, ...__VLS_functionalComponentArgsRest(__VLS_125));
 __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
     ...{ class: "assets-page-size" },
 });
@@ -965,31 +1037,31 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
     value: (12),
 });
 if (selectedAsset.value && selectedAssetUrl.value) {
-    const __VLS_119 = AssetPreviewDialog;
+    const __VLS_129 = AssetPreviewDialog;
     // @ts-ignore
-    const __VLS_120 = __VLS_asFunctionalComponent1(__VLS_119, new __VLS_119({
+    const __VLS_130 = __VLS_asFunctionalComponent1(__VLS_129, new __VLS_129({
         // @ts-ignore
         ...{ 'onClose': {} }, ...{ 'onRecreate': {} }, asset: (selectedAsset.value), mediaUrl: (selectedAssetUrl.value),
     }));
-    const __VLS_121 = __VLS_120({
+    const __VLS_131 = __VLS_130({
         ...{ 'onClose': {} },
         ...{ 'onRecreate': {} },
         asset: (selectedAsset.value),
         mediaUrl: (selectedAssetUrl.value),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_120));
-    let __VLS_124;
-    const __VLS_125 = {
-        /** @type {typeof __VLS_124.close} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_130));
+    let __VLS_134;
+    const __VLS_135 = {
+        /** @type {typeof __VLS_134.close} */
         onClose: (closeAsset),
     };
-    void __VLS_125;
-    const __VLS_126 = {
-        /** @type {typeof __VLS_124.recreate} */
+    void __VLS_135;
+    const __VLS_136 = {
+        /** @type {typeof __VLS_134.recreate} */
         onRecreate: (useSameParameters),
     };
-    void __VLS_126;
-    var __VLS_122;
-    var __VLS_123;
+    void __VLS_136;
+    var __VLS_132;
+    var __VLS_133;
 }
 // @ts-ignore
 [pageSize, currentPage, totalPages, selectedAsset, selectedAsset, selectedAssetUrl, selectedAssetUrl,];

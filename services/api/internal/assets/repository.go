@@ -14,7 +14,7 @@ var ErrNotFound = errors.New("asset not found")
 
 type Repository interface {
 	Create(context.Context, CreateInput) (Asset, error)
-	List(context.Context, string, Kind, Source, string, int, int) (Page, error)
+	List(context.Context, string, Kind, Source, Status, string, int, int) (Page, error)
 	Find(context.Context, string, string) (Asset, error)
 	FindByID(context.Context, string) (Asset, error)
 }
@@ -66,7 +66,7 @@ func (repository *PostgresRepository) Create(ctx context.Context, input CreateIn
 	return scanAsset(row, false)
 }
 
-func (repository *PostgresRepository) List(ctx context.Context, userID string, kind Kind, source Source, search string, page, pageSize int) (Page, error) {
+func (repository *PostgresRepository) List(ctx context.Context, userID string, kind Kind, source Source, status Status, search string, page, pageSize int) (Page, error) {
 	offset := (page - 1) * pageSize
 	rows, err := repository.pool.Query(ctx, `
 		SELECT `+assetColumns+`,`+generationColumns+`,count(*) OVER()
@@ -76,10 +76,11 @@ func (repository *PostgresRepository) List(ctx context.Context, userID string, k
 		WHERE asset.user_id = $1
 		  AND ($2 = '' OR asset.kind = $2)
 		  AND ($3 = '' OR asset.source = $3)
-		  AND ($4 = '' OR asset.title ILIKE '%' || $4 || '%')
+		  AND ($4 = '' OR asset.status = $4)
+		  AND ($5 = '' OR asset.title ILIKE '%' || $5 || '%')
 		ORDER BY asset.created_at DESC, asset.id DESC
-		LIMIT $5 OFFSET $6
-	`, userID, kind, source, search, pageSize, offset)
+		LIMIT $6 OFFSET $7
+	`, userID, kind, source, status, search, pageSize, offset)
 	if err != nil {
 		return Page{}, err
 	}

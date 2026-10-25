@@ -136,6 +136,30 @@ func (provider *MiniMaxH3VideoProvider) Query(ctx context.Context, task Task, se
 	}
 }
 
+func (provider *MiniMaxH3VideoProvider) Cancel(ctx context.Context, task Task, selected modelchannels.ResolvedModel) error {
+	if selected.Protocol != "compshare-minimax-h3" || task.UpstreamTaskID == "" {
+		return ErrProviderUnavailable
+	}
+	path := "/minimax/v2/video_generation/" + url.PathEscape(task.UpstreamTaskID)
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, strings.TrimRight(selected.BaseURL, "/")+path, nil)
+	if err != nil {
+		return err
+	}
+	applyProviderAuth(request, selected)
+	request.Header.Set("Accept", "application/json")
+	response, err := provider.client.Do(request)
+	if err != nil {
+		return &ExecutionError{Err: fmt.Errorf("video cancel failed: %w", err), Path: path, SafeToRetry: false}
+	}
+	defer response.Body.Close()
+	if (response.StatusCode >= 200 && response.StatusCode < 300) || response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	status := response.StatusCode
+	return &ExecutionError{Err: fmt.Errorf("video cancel returned status %d: %s", status, providerErrorMessage(body)), Path: path, HTTPStatus: &status, SafeToRetry: false}
+}
+
 func (provider *MiniMaxH3VideoProvider) download(ctx context.Context, rawURL string, selected modelchannels.ResolvedModel) (GeneratedVideo, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {

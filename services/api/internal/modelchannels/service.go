@@ -47,7 +47,7 @@ func (service *Service) ResolveCandidates(ctx context.Context, capability, model
 		if apiKey == "" && advanced.AuthMode != "none" {
 			continue
 		}
-		resolved = append(resolved, ResolvedModel{ChannelID: pair.Channel.ID, BaseURL: pair.Channel.BaseURL, APIKey: apiKey, Protocol: pair.Channel.Protocol, AdvancedConfig: advanced, UpstreamModel: pair.Model.ModelID, Priority: pair.Channel.Priority, Weight: pair.Channel.Weight, MaxConcurrency: pair.Channel.MaxConcurrency, TimeoutSeconds: pair.Channel.TimeoutSeconds})
+		resolved = append(resolved, ResolvedModel{ChannelID: pair.Channel.ID, BaseURL: pair.Channel.BaseURL, APIKey: apiKey, Protocol: pair.Channel.Protocol, AdvancedConfig: advanced, UpstreamModel: pair.Model.ModelID, Priority: pair.Channel.Priority, Weight: pair.Channel.Weight, MaxConcurrency: pair.Channel.MaxConcurrency, TimeoutSeconds: pair.Channel.TimeoutSeconds, PollIntervalSeconds: advanced.PollIntervalSeconds})
 	}
 	if len(resolved) == 0 {
 		return nil, ErrChannelDisabled
@@ -75,6 +75,9 @@ func (service *Service) ResolveCandidates(ctx context.Context, capability, model
 
 func (service *Service) TryAcquire(ctx context.Context, channelID string) (bool, error) {
 	return service.repository.TryAcquire(ctx, channelID)
+}
+func (service *Service) TryAcquirePinned(ctx context.Context, channelID string) (bool, error) {
+	return service.repository.TryAcquirePinned(ctx, channelID)
 }
 func (service *Service) Release(ctx context.Context, channelID string, success bool, latencyMS int64, message string) error {
 	return service.repository.Release(ctx, channelID, success, latencyMS, message)
@@ -109,7 +112,7 @@ func (service *Service) Create(ctx context.Context, input ChannelInput) (Channel
 	if err == nil {
 		definition, _ := FindProtocolDefinition(input.Protocol)
 		for index, model := range definition.BuiltInModels {
-			_, createErr := service.repository.CreateModel(ctx, channel.ID, ModelInput{ModelID: model.ID, DisplayName: model.Label, Capability: model.Capability, Enabled: true, SortOrder: index})
+			_, createErr := service.repository.CreateModel(ctx, channel.ID, ModelInput{ModelID: model.ID, DisplayName: model.Label, Capability: model.Capability, Enabled: true, SortOrder: index, CapabilityConfig: model.CapabilityConfig})
 			if createErr != nil {
 				_ = service.repository.Delete(ctx, channel.ID)
 				return Channel{}, createErr
@@ -197,7 +200,7 @@ func (service *Service) ResolveModel(ctx context.Context, capability, channelID,
 	if apiKey == "" && channel.AdvancedConfig.AuthMode != "none" {
 		return ResolvedModel{}, ErrChannelDisabled
 	}
-	return ResolvedModel{ChannelID: channel.ID, BaseURL: channel.BaseURL, APIKey: apiKey, Protocol: channel.Protocol, AdvancedConfig: channel.AdvancedConfig, UpstreamModel: model.ModelID, Priority: channel.Priority, Weight: channel.Weight, MaxConcurrency: channel.MaxConcurrency, TimeoutSeconds: channel.TimeoutSeconds}, nil
+	return ResolvedModel{ChannelID: channel.ID, BaseURL: channel.BaseURL, APIKey: apiKey, Protocol: channel.Protocol, AdvancedConfig: channel.AdvancedConfig, UpstreamModel: model.ModelID, Priority: channel.Priority, Weight: channel.Weight, MaxConcurrency: channel.MaxConcurrency, TimeoutSeconds: channel.TimeoutSeconds, PollIntervalSeconds: channel.AdvancedConfig.PollIntervalSeconds}, nil
 }
 
 func (service *Service) TestConnection(ctx context.Context, id string, persistModels bool) (ConnectionResult, error) {
@@ -361,6 +364,9 @@ func normalizeChannelInput(input ChannelInput) (ChannelInput, error) {
 		input.BaseURL = definition.DefaultBaseURL
 	}
 	input.AdvancedConfig = normalizeAdvancedConfig(input.AdvancedConfig, definition)
+	if input.AdvancedConfig.PollIntervalSeconds > 3600 {
+		return ChannelInput{}, ErrInvalidChannel
+	}
 	if input.Priority <= 0 {
 		input.Priority = 100
 	}
@@ -402,6 +408,17 @@ func normalizeModelInput(input ModelInput) (ModelInput, error) {
 	}
 	if input.Capability == "" {
 		input.Capability = inferCapability(input.ModelID)
+	}
+	if input.Capability == "video" {
+		if input.CapabilityConfig.MinDuration <= 0 {
+			input.CapabilityConfig.MinDuration = 4
+		}
+		if input.CapabilityConfig.MaxDuration <= 0 {
+			input.CapabilityConfig.MaxDuration = 30
+		}
+		if input.CapabilityConfig.MinDuration > input.CapabilityConfig.MaxDuration || input.CapabilityConfig.MaxDuration > 3600 || len(input.CapabilityConfig.Ratios) > 30 || len(input.CapabilityConfig.Qualities) > 30 || len(input.CapabilityConfig.Modes) > 10 {
+			return ModelInput{}, ErrInvalidModel
+		}
 	}
 	if input.ModelID == "" || utf8.RuneCountInString(input.ModelID) > 120 || utf8.RuneCountInString(input.DisplayName) > 120 || !validCapability(input.Capability) || input.SortOrder < 0 {
 		return ModelInput{}, ErrInvalidModel
@@ -471,6 +488,9 @@ func normalizeAdvancedConfig(input AdvancedConfig, definition ProtocolDefinition
 	}
 	if input.OperationConfigs == nil {
 		input.OperationConfigs = defaults.OperationConfigs
+	}
+	if input.PollIntervalSeconds <= 0 {
+		input.PollIntervalSeconds = 5
 	}
 	return input
 }

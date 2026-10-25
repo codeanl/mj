@@ -35,6 +35,9 @@ func NewWorker(repository *Repository, provider ImageProvider, videoProvider *Mi
 
 func (worker *Worker) Run(ctx context.Context) {
 	worker.logger.Info("generation worker started", "interval", worker.interval.String())
+	if err := worker.repository.RecoverPollingTasks(ctx); err != nil {
+		worker.logger.Error("failed to recover video polling tasks", "error", err)
+	}
 	worker.runAvailable(ctx)
 	ticker := time.NewTicker(worker.interval)
 	defer ticker.Stop()
@@ -55,7 +58,7 @@ func (worker *Worker) runAvailable(ctx context.Context) {
 		return
 	}
 	for {
-		task, found, err := worker.repository.ClaimNext(ctx)
+		task, found, err := worker.repository.ClaimNext(ctx, time.Now().Add(worker.stale))
 		if err != nil {
 			worker.logger.Error("failed to claim generation task", "error", err)
 			return
@@ -197,6 +200,10 @@ func (worker *Worker) process(ctx context.Context, task Task) {
 }
 
 func (worker *Worker) processVideo(ctx context.Context, task Task) {
+	if task.UpstreamTaskID != "" {
+		worker.pollVideo(ctx, task)
+		return
+	}
 	candidates, err := worker.channels.ResolveCandidates(ctx, "video", task.Model)
 	if err != nil {
 		worker.fail(ctx, task, err)
@@ -245,7 +252,7 @@ func (worker *Worker) processVideo(ctx context.Context, task Task) {
 		if err == nil && result.Pending {
 			_ = worker.repository.FinishAttempt(ctx, attemptID, "pending", nil, duration, "")
 			_ = worker.channels.Release(ctx, candidate.ChannelID, true, duration, "")
-			_ = worker.repository.MarkNeedsReview(ctx, task, result.UpstreamTaskID, "/minimax/v2/query/video_generation/:task_id", "视频任务已提交，请检查状态")
+			_ = worker.repository.MarkPolling(ctx, task, result.UpstreamTaskID, "/minimax/v2/query/video_generation/:task_id", time.Now().Add(time.Duration(candidate.PollIntervalSeconds)*time.Second))
 			return
 		}
 		latest = err
@@ -273,15 +280,104 @@ func (worker *Worker) processVideo(ctx context.Context, task Task) {
 	worker.fail(ctx, task, latest)
 }
 
+func (worker *Worker) pollVideo(ctx context.Context, task Task) {
+	selected, err := worker.channels.ResolveModel(ctx, "video", task.ChannelID, task.Model)
+	if err != nil {
+		_ = worker.repository.MarkNeedsReview(ctx, task, task.UpstreamTaskID, task.UpstreamQueryPath, "原视频渠道配置不可用，请管理员检查")
+		return
+	}
+	nextPollAt := func() time.Time {
+		return time.Now().Add(time.Duration(selected.PollIntervalSeconds) * time.Second)
+	}
+	acquired, err := worker.channels.TryAcquirePinned(ctx, selected.ChannelID)
+	if err != nil || !acquired {
+		_ = worker.repository.SchedulePoll(ctx, task.ID, nextPollAt(), "")
+		return
+	}
+	path := strings.ReplaceAll(task.UpstreamQueryPath, ":task_id", task.UpstreamTaskID)
+	attemptID, _, err := worker.repository.StartAttempt(ctx, task.ID, selected.ChannelID, selected.Protocol, path)
+	if err != nil {
+		_ = worker.channels.Release(ctx, selected.ChannelID, false, 0, err.Error())
+		_ = worker.repository.SchedulePoll(ctx, task.ID, nextPollAt(), "")
+		return
+	}
+	started := time.Now()
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(selected.TimeoutSeconds)*time.Second)
+	result, queryErr := worker.videoProvider.Query(requestCtx, task, selected)
+	cancel()
+	duration := time.Since(started).Milliseconds()
+	if queryErr != nil {
+		var executionErr *ExecutionError
+		var httpStatus *int
+		confirmedFailure := false
+		if errors.As(queryErr, &executionErr) {
+			httpStatus = executionErr.HTTPStatus
+			confirmedFailure = httpStatus != nil && (*httpStatus == 400 || *httpStatus == 404 || *httpStatus == 410)
+		}
+		attemptStatus := "unknown"
+		if confirmedFailure {
+			attemptStatus = "failed"
+		}
+		_ = worker.repository.FinishAttempt(ctx, attemptID, attemptStatus, httpStatus, duration, queryErr.Error())
+		_ = worker.channels.Release(ctx, selected.ChannelID, false, duration, queryErr.Error())
+		if confirmedFailure {
+			worker.fail(ctx, task, queryErr)
+		} else {
+			_ = worker.repository.SchedulePoll(ctx, task.ID, nextPollAt(), "")
+		}
+		return
+	}
+	if result.Pending {
+		_ = worker.repository.FinishAttempt(ctx, attemptID, "pending", nil, duration, "")
+		_ = worker.channels.Release(ctx, selected.ChannelID, true, duration, "")
+		_ = worker.repository.SchedulePoll(ctx, task.ID, nextPollAt(), "")
+		return
+	}
+	if result.Failed {
+		_ = worker.repository.FinishAttempt(ctx, attemptID, "failed", nil, duration, result.Error)
+		_ = worker.channels.Release(ctx, selected.ChannelID, true, duration, "")
+		worker.fail(ctx, task, errors.New(result.Error))
+		return
+	}
+	_ = worker.repository.FinishAttempt(ctx, attemptID, "succeeded", nil, duration, "")
+	_ = worker.channels.Release(ctx, selected.ChannelID, true, duration, "")
+	if err := worker.persistVideo(ctx, task, result); err != nil {
+		if errors.Is(err, ErrTaskNotActive) {
+			return
+		}
+		worker.fail(ctx, task, err)
+		return
+	}
+	worker.logger.Info("video generation task completed", "task_id", task.ID, "asset_id", task.AssetID)
+}
+
+func (worker *Worker) persistVideo(ctx context.Context, task Task, result GeneratedVideo) error {
+	_, extension, ok := assets.ParseMediaType(result.MimeType)
+	if !ok {
+		return errors.New("provider returned unsupported video content")
+	}
+	storageKey := task.AssetID + extension
+	if err := worker.storage.Save(storageKey, bytes.NewReader(result.Content)); err != nil {
+		return fmt.Errorf("generated video storage failed: %w", err)
+	}
+	duration := float64(task.DurationSeconds)
+	asset := CompletedAsset{StorageKey: storageKey, OriginalName: storageKey, MimeType: result.MimeType, SizeBytes: int64(len(result.Content)), DurationSeconds: &duration}
+	if err := worker.repository.Complete(ctx, task, asset); err != nil {
+		_ = worker.storage.Delete(storageKey)
+		return fmt.Errorf("video result persistence failed: %w", err)
+	}
+	return nil
+}
+
 func (worker *Worker) fail(ctx context.Context, task Task, err error) {
-	message := publicGenerationError(err)
+	message := publicGenerationError(err, task.Kind)
 	if persistErr := worker.repository.Fail(ctx, task, message); persistErr != nil {
 		worker.logger.Error("failed to persist generation failure", "task_id", task.ID, "error", persistErr)
 	}
 	worker.logger.Error("generation task failed", "task_id", task.ID, "error", err)
 }
 
-func publicGenerationError(err error) string {
+func publicGenerationError(err error, kind string) string {
 	if errors.Is(err, ErrProviderUnavailable) {
 		return "当前模型渠道不可用，请稍后重试"
 	}
@@ -294,6 +390,9 @@ func publicGenerationError(err error) string {
 	}
 	if strings.Contains(err.Error(), "dimensions") {
 		return "生成结果尺寸不符合要求，请重试"
+	}
+	if kind == "video" {
+		return "视频生成失败，请重试"
 	}
 	return "图片生成失败，请重试"
 }

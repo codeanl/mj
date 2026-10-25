@@ -5,6 +5,7 @@ import { useDebounceFn, useIntervalFn } from "@vueuse/core"
 import {
   ChevronLeft,
   ChevronRight,
+  Ban,
   CircleAlert,
   Download,
   Image,
@@ -24,7 +25,7 @@ import * as assetApi from "@/services/assets"
 import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue"
 import { apiErrorMessage } from "@/services/http"
 import { notification } from "@/services/notifications"
-import { checkGenerationTask, retryGenerationTask } from "@/services/generation"
+import { cancelGenerationTask, checkGenerationTask, retryGenerationTask } from "@/services/generation"
 import { useAuthStore } from "@/stores/auth"
 
 type AssetFilter = "all" | assetApi.AssetType
@@ -126,7 +127,7 @@ async function loadPreviewUrls(items: assetApi.Asset[], sequence: number) {
         if (existingUrls[asset.id] && existingSignatures[asset.id] === signature) {
           return { id: asset.id, url: existingUrls[asset.id], signature, created: false }
         }
-        const previewURL = asset.type === "image" ? `${asset.url}${asset.url.includes("?") ? "&" : "?"}thumbnail=1` : asset.url
+        const previewURL = asset.type === "image" ? `${asset.url}${asset.url.includes("?") ? "&" : "?"}thumbnail=1` : asset.posterUrl || asset.url
         let blob: Blob
         try {
           blob = await assetApi.getAssetContent(previewURL)
@@ -198,7 +199,7 @@ async function openAsset(asset: assetApi.Asset) {
   closeAsset()
   selectedAsset.value = asset
   selectedAssetUrl.value = previewUrls.value[asset.id]
-  if (asset.type !== "image") return
+  if (asset.type === "audio") return
   try {
     const original = await assetApi.getAssetContent(asset.url)
     const objectUrl = URL.createObjectURL(original)
@@ -244,6 +245,18 @@ async function checkAsset(asset: assetApi.Asset) {
 		await loadAssets({ silent: true })
 		notification.info(task.status === "succeeded" ? "任务已完成" : "上游仍在处理中，请稍后再次检查")
 	} catch (error) { notification.error(apiErrorMessage(error, "状态检查失败")) }
+	finally { retryingId.value = "" }
+}
+
+async function cancelAsset(asset: assetApi.Asset) {
+	if (!asset.generationTaskId || retryingId.value) return
+	retryingId.value = asset.id
+	try {
+		const result = await cancelGenerationTask(asset.generationTaskId)
+		if (result.pointsRemaining !== undefined) authStore.setPointsBalance(result.pointsRemaining)
+		await loadAssets({ silent: true })
+		notification.success("生成任务已取消，积分已退回")
+	} catch (error) { notification.error(apiErrorMessage(error, "任务取消失败")) }
 	finally { retryingId.value = "" }
 }
 
@@ -335,7 +348,7 @@ function statusLabel(status: assetApi.AssetStatus) {
     <div v-else-if="assets.length" class="assets-grid">
       <article v-for="asset in assets" :key="asset.id" class="asset-card" :class="`asset-card--${asset.status}`">
         <button class="asset-card__preview" type="button" :disabled="asset.status !== 'ready'" @click="openAsset(asset)">
-          <img v-if="asset.status === 'ready' && previewUrls[asset.id] && asset.type === 'image'" :src="previewUrls[asset.id]" :alt="asset.title" />
+		  <img v-if="asset.status === 'ready' && previewUrls[asset.id] && (asset.type === 'image' || asset.posterUrl)" :src="previewUrls[asset.id]" :alt="asset.title" />
 		  <video v-else-if="asset.status === 'ready' && previewUrls[asset.id] && asset.type === 'video'" :src="previewUrls[asset.id]" muted preload="metadata" />
 		  <span v-else-if="asset.status === 'ready' && previewUrls[asset.id]" class="asset-card__audio"><Music :size="30" /><strong>{{ asset.title }}</strong></span>
 		  <span v-else-if="asset.status === 'generating'" class="asset-card__generation-state"><LoaderCircle class="spin" :size="25" /><strong>图片生成中</strong><small>任务完成后自动更新</small></span>
@@ -351,7 +364,7 @@ function statusLabel(status: assetApi.AssetStatus) {
             <strong>{{ asset.title }}</strong>
             <span class="asset-card__details"><em :class="`is-${asset.source}`">{{ sourceLabel(asset.source) }}</em><i :class="`is-${asset.status}`">{{ statusLabel(asset.status) }}</i>{{ formatDimensions(asset) }} · {{ formatDate(asset.createdAt) }}</span>
           </div>
-		  <button v-if="asset.status === 'failed' && asset.generationTaskId" type="button" aria-label="重试失败任务" :disabled="retryingId === asset.id" @click="retryAsset(asset)"><LoaderCircle v-if="retryingId === asset.id" class="spin" :size="16" /><RotateCcw v-else :size="16" /></button><button v-else-if="asset.status === 'needs_review' && asset.generationTaskId" type="button" aria-label="检查任务状态" :disabled="retryingId === asset.id" @click="checkAsset(asset)"><LoaderCircle v-if="retryingId === asset.id" class="spin" :size="16" /><RefreshCcw v-else :size="16" /></button><button v-else type="button" :aria-label="`下载 ${asset.title}`" :disabled="asset.status !== 'ready'" @click="downloadAsset(asset)"><Download :size="16" /></button>
+		  <button v-if="asset.status === 'generating' && asset.generationTaskId && (asset.generation?.status === 'queued' || asset.generation?.upstreamTaskId)" type="button" aria-label="取消生成任务" :disabled="retryingId === asset.id" @click="cancelAsset(asset)"><LoaderCircle v-if="retryingId === asset.id" class="spin" :size="16" /><Ban v-else :size="16" /></button><button v-else-if="asset.status === 'failed' && asset.generationTaskId" type="button" aria-label="重试失败任务" :disabled="retryingId === asset.id" @click="retryAsset(asset)"><LoaderCircle v-if="retryingId === asset.id" class="spin" :size="16" /><RotateCcw v-else :size="16" /></button><button v-else-if="asset.status === 'needs_review' && asset.generationTaskId" type="button" aria-label="检查任务状态" :disabled="retryingId === asset.id" @click="checkAsset(asset)"><LoaderCircle v-if="retryingId === asset.id" class="spin" :size="16" /><RefreshCcw v-else :size="16" /></button><button v-else type="button" :aria-label="`下载 ${asset.title}`" :disabled="asset.status !== 'ready'" @click="downloadAsset(asset)"><Download :size="16" /></button>
         </div>
       </article>
     </div>

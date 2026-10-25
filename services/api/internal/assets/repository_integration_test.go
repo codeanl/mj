@@ -52,7 +52,7 @@ func TestListIncludesGenerationMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	page, err := NewPostgresRepository(pool).List(ctx, userID, "", SourceGenerated, "", 1, 8)
+	page, err := NewPostgresRepository(pool).List(ctx, userID, "", SourceGenerated, StatusReady, "", 1, 8)
 	if err != nil || len(page.Items) != 1 {
 		t.Fatalf("list: %#v err=%v", page, err)
 	}

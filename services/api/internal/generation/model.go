@@ -71,6 +71,7 @@ type ImageOptions struct {
 }
 
 type CreateImageInput struct {
+	RequestID         string
 	UserID            string
 	Prompt            string
 	Model             string
@@ -81,6 +82,7 @@ type CreateImageInput struct {
 }
 
 type CreateVideoInput struct {
+	RequestID        string
 	UserID           string
 	Prompt           string
 	Model            string

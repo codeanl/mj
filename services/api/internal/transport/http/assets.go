@@ -1,7 +1,6 @@
 package httptransport
 
 import (
-	"bytes"
 	"errors"
 	"image"
 	_ "image/gif"
@@ -42,7 +41,7 @@ func (handlers assetHandlers) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	assetPage, err := handlers.service.List(
-		r.Context(), user.ID, assets.Kind(r.URL.Query().Get("type")), assets.Source(r.URL.Query().Get("source")), r.URL.Query().Get("search"), page, pageSize,
+		r.Context(), user.ID, assets.Kind(r.URL.Query().Get("type")), assets.Source(r.URL.Query().Get("source")), assets.Status(r.URL.Query().Get("status")), r.URL.Query().Get("search"), page, pageSize,
 	)
 	if err != nil {
 		handlers.writeAssetError(w, err)
@@ -120,6 +119,26 @@ func (handlers assetHandlers) Upload(w http.ResponseWriter, r *http.Request) {
 func decorateAssetURLs(asset *assets.Asset) {
 	asset.URL = "/api/v1/assets/" + asset.ID + "/content"
 	asset.DownloadURL = asset.URL + "?download=1"
+	if asset.Kind == assets.KindVideo && asset.Status == assets.StatusReady {
+		asset.PosterURL = "/api/v1/assets/" + asset.ID + "/poster"
+	}
+}
+
+func (handlers assetHandlers) Poster(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	asset, content, err := handlers.service.OpenPoster(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		handlers.writeAssetError(w, err)
+		return
+	}
+	defer content.Close()
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	http.ServeContent(w, r, asset.Title+".jpg", asset.CreatedAt, content)
 }
 
 func (handlers assetHandlers) Content(w http.ResponseWriter, r *http.Request) {
@@ -128,22 +147,23 @@ func (handlers assetHandlers) Content(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
 		return
 	}
-	asset, content, err := handlers.service.Open(r.Context(), user.ID, r.PathValue("id"))
+	var asset assets.Asset
+	var content io.ReadSeekCloser
+	var err error
+	if r.URL.Query().Get("thumbnail") == "1" {
+		asset, content, err = handlers.service.OpenThumbnail(r.Context(), user.ID, r.PathValue("id"))
+	} else {
+		asset, content, err = handlers.service.Open(r.Context(), user.ID, r.PathValue("id"))
+	}
 	if err != nil {
 		handlers.writeAssetError(w, err)
 		return
 	}
 	defer content.Close()
-	if r.URL.Query().Get("thumbnail") == "1" && asset.Kind == assets.KindImage {
-		thumbnail, thumbnailErr := assets.CreateImageThumbnail(content, 400)
-		if thumbnailErr != nil {
-			handlers.logger.Warn("asset thumbnail failed", "asset_id", asset.ID, "error", thumbnailErr)
-			writeJSON(w, http.StatusUnprocessableEntity, response{Code: 42211, Msg: "图片缩略图暂不可用"})
-			return
-		}
+	if r.URL.Query().Get("thumbnail") == "1" {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.Header().Set("Cache-Control", "private, max-age=300")
-		http.ServeContent(w, r, asset.Title+".jpg", asset.CreatedAt, bytes.NewReader(thumbnail))
+		http.ServeContent(w, r, asset.Title+".jpg", asset.CreatedAt, content)
 		return
 	}
 	w.Header().Set("Content-Type", asset.MimeType)

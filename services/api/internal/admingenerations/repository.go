@@ -27,6 +27,7 @@ type lockedTask struct {
 	pointsRefunded      bool
 	pointsTransactionID string
 	retryCount          int
+	upstreamTaskID      string
 }
 
 const taskColumns = `
@@ -151,7 +152,7 @@ func (repository *Repository) Cancel(ctx context.Context, taskID string) (Action
 		return ActionResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	if task.status != "queued" {
+	if task.status != "queued" && !(task.status == "running" && task.upstreamTaskID != "") {
 		return ActionResult{}, ErrInvalidState
 	}
 	balance, refunded, err := refundLocked(ctx, tx, taskID, task, "管理员取消生成任务")
@@ -161,7 +162,7 @@ func (repository *Repository) Cancel(ctx context.Context, taskID string) (Action
 	if _, err := tx.Exec(ctx, `UPDATE media_assets SET status = 'failed', error_message = '管理员取消任务' WHERE id = $1`, task.assetID); err != nil {
 		return ActionResult{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE generation_tasks SET status = 'cancelled', completed_at = now(), error_message = '管理员取消任务', points_refunded = $2 WHERE id = $1`, taskID, refunded); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE generation_tasks SET status = 'cancelled', completed_at = now(),next_poll_at=NULL,error_message = '管理员取消任务', points_refunded = $2 WHERE id = $1`, taskID, refunded); err != nil {
 		return ActionResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -233,7 +234,8 @@ func (repository *Repository) Retry(ctx context.Context, taskID string) (ActionR
 	if _, err := tx.Exec(ctx, `
 		UPDATE generation_tasks
 		SET status = 'queued', started_at = NULL, completed_at = NULL, error_message = NULL,
-		    points_refunded = false, points_transaction_id = NULLIF($2, '')::uuid, retry_count = retry_count + 1
+		    points_refunded = false, points_transaction_id = NULLIF($2, '')::uuid, retry_count = retry_count + 1,
+		    upstream_task_id=NULL,upstream_query_path=NULL,next_poll_at=NULL,review_reason=NULL
 		WHERE id = $1
 	`, taskID, transactionID); err != nil {
 		return ActionResult{}, err
@@ -256,6 +258,17 @@ func (repository *Repository) RetryForUser(ctx context.Context, userID, taskID s
 	return repository.Retry(ctx, taskID)
 }
 
+func (repository *Repository) CancelForUser(ctx context.Context, userID, taskID string) (ActionResult, error) {
+	var exists bool
+	if err := repository.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM generation_tasks WHERE id=$1 AND user_id=$2)`, taskID, userID).Scan(&exists); err != nil {
+		return ActionResult{}, err
+	}
+	if !exists {
+		return ActionResult{}, ErrNotFound
+	}
+	return repository.Cancel(ctx, taskID)
+}
+
 func (repository *Repository) lock(ctx context.Context, taskID string) (pgx.Tx, lockedTask, error) {
 	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -264,9 +277,9 @@ func (repository *Repository) lock(ctx context.Context, taskID string) (pgx.Tx, 
 	var task lockedTask
 	err = tx.QueryRow(ctx, `
 		SELECT user_id::text, asset_id::text, status, model, points_cost, points_refunded,
-		       coalesce(points_transaction_id::text, ''), retry_count
+		       coalesce(points_transaction_id::text, ''), retry_count,coalesce(upstream_task_id,'')
 		FROM generation_tasks WHERE id = $1 FOR UPDATE
-	`, taskID).Scan(&task.userID, &task.assetID, &task.status, &task.model, &task.pointsCost, &task.pointsRefunded, &task.pointsTransactionID, &task.retryCount)
+	`, taskID).Scan(&task.userID, &task.assetID, &task.status, &task.model, &task.pointsCost, &task.pointsRefunded, &task.pointsTransactionID, &task.retryCount, &task.upstreamTaskID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		tx.Rollback(ctx)
 		return nil, lockedTask{}, ErrNotFound

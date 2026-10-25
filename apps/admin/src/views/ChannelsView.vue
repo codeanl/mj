@@ -24,7 +24,7 @@ const editingModelId = ref("")
 
 const routingDefaults = { priority: 100, weight: 100, maxConcurrency: 4, timeoutSeconds: 300, failureThreshold: 3, cooldownSeconds: 60 }
 const channelForm = reactive<channelApi.ChannelInput>({ name: "", baseUrl: "", protocol: "openai", apiKey: "", enabled: false, advancedConfig: emptyAdvancedConfig(), ...routingDefaults })
-const modelForm = reactive<channelApi.ModelInput>({ modelId: "", displayName: "", capability: "image", enabled: true, sortOrder: 0 })
+const modelForm = reactive<channelApi.ModelInput>({ modelId: "", displayName: "", capability: "image", enabled: true, sortOrder: 0, capabilityConfig: emptyModelCapabilityConfig() })
 
 const editingChannel = computed(() => channels.value.find((channel) => channel.id === editingId.value))
 const imageModels=computed(()=>Array.from(new Set(channels.value.flatMap(channel=>channel.models.filter(model=>model.capability==="image"&&model.enabled).map(model=>model.modelId)))))
@@ -171,6 +171,7 @@ function openModel(model?: channelApi.ChannelModel) {
     capability: model?.capability || "image",
     enabled: model?.enabled ?? true,
     sortOrder: model?.sortOrder ?? (editingChannel.value?.models.length || 0),
+    capabilityConfig: model ? { ...emptyModelCapabilityConfig(), ...cloneData(model.capabilityConfig) } : emptyModelCapabilityConfig(),
   })
   modelDialogOpen.value = true
 }
@@ -225,12 +226,17 @@ function advancedFromProtocol(protocol: channelApi.ProtocolDefinition): channelA
     authMode: protocol.authMode,
     modelCatalogPaths: [...protocol.modelCatalogPaths],
     operationConfigs: cloneData(protocol.operations),
+	pollIntervalSeconds: 5,
     ...primary,
   }
 }
 
 function emptyAdvancedConfig(): channelApi.AdvancedConfig {
-  return { apiFormat: "openai", authMode: "bearer", modelCatalogPaths: [], operationConfigs: {} }
+  return { apiFormat: "openai", authMode: "bearer", modelCatalogPaths: [], operationConfigs: {}, pollIntervalSeconds: 5 }
+}
+
+function emptyModelCapabilityConfig(): channelApi.ModelCapabilityConfig {
+  return { ratios: ["adaptive","16:9","9:16","1:1"], qualities: ["480P","768P","1080P"], minDuration: 4, maxDuration: 30, modes: ["text","frames","reference"], supportsSound: true, supportsWatermark: true }
 }
 
 function cloneData<T>(value: T): T {
@@ -311,6 +317,7 @@ function messageOf(error: unknown, fallback: string) {
 			<label><span>流量权重</span><ElInputNumber v-model="channelForm.weight" :min="1" :max="10000" /></label>
 			<label><span>最大并发</span><ElInputNumber v-model="channelForm.maxConcurrency" :min="1" :max="1000" /></label>
 			<label><span>请求超时（秒）</span><ElInputNumber v-model="channelForm.timeoutSeconds" :min="1" :max="3600" /></label>
+			<label><span>任务查询间隔（秒）</span><ElInputNumber v-model="channelForm.advancedConfig.pollIntervalSeconds" :min="1" :max="3600" /></label>
 			<label><span>失败熔断阈值</span><ElInputNumber v-model="channelForm.failureThreshold" :min="1" :max="100" /></label>
 			<label><span>冷却时间（秒）</span><ElInputNumber v-model="channelForm.cooldownSeconds" :min="1" :max="86400" /></label>
             <label><span>API 格式</span><ElSelect v-model="channelForm.advancedConfig.apiFormat" :disabled="selectedProtocol?.strict"><ElOption label="OpenAI" value="openai" /><ElOption label="Gemini" value="gemini" /></ElSelect></label>
@@ -355,6 +362,15 @@ function messageOf(error: unknown, fallback: string) {
         <label><span>展示名称</span><ElInput v-model="modelForm.displayName" placeholder="留空则使用模型 ID" /></label>
         <label><span>模型能力</span><ElSelect v-model="modelForm.capability"><ElOption label="文本" value="text" /><ElOption label="图片" value="image" /><ElOption label="视频" value="video" /><ElOption label="音频" value="audio" /></ElSelect></label>
         <label><span>排序</span><ElInput v-model.number="modelForm.sortOrder" type="number" min="0" /></label>
+		<template v-if="modelForm.capability === 'video'">
+		  <label class="channel-form-wide"><span>支持比例</span><ElSelect v-model="modelForm.capabilityConfig.ratios" multiple collapse-tags><ElOption v-for="value in ['adaptive','21:9','16:9','4:3','1:1','3:4','9:16']" :key="value" :label="value === 'adaptive' ? '自适应' : value" :value="value" /></ElSelect></label>
+		  <label class="channel-form-wide"><span>支持清晰度</span><ElSelect v-model="modelForm.capabilityConfig.qualities" multiple collapse-tags><ElOption v-for="value in ['480P','768P','1080P','2K','4K']" :key="value" :label="value" :value="value" /></ElSelect></label>
+		  <label><span>最短时长（秒）</span><ElInputNumber v-model="modelForm.capabilityConfig.minDuration" :min="1" :max="3600" /></label>
+		  <label><span>最长时长（秒）</span><ElInputNumber v-model="modelForm.capabilityConfig.maxDuration" :min="1" :max="3600" /></label>
+		  <label class="channel-form-wide"><span>生成模式</span><ElSelect v-model="modelForm.capabilityConfig.modes" multiple><ElOption label="文生视频" value="text" /><ElOption label="首尾帧" value="frames" /><ElOption label="全能参考" value="reference" /></ElSelect></label>
+		  <label class="channel-switch-row"><span><strong>支持声音</strong><small>允许客户端开启或关闭生成声音。</small></span><ElSwitch v-model="modelForm.capabilityConfig.supportsSound" /></label>
+		  <label class="channel-switch-row"><span><strong>支持水印</strong><small>允许客户端选择是否添加水印。</small></span><ElSwitch v-model="modelForm.capabilityConfig.supportsWatermark" /></label>
+		</template>
         <label class="channel-switch-row"><span><strong>启用模型</strong><small>启用后会进入对应能力工作台的模型目录。</small></span><ElSwitch v-model="modelForm.enabled" /></label>
       </div>
       <template #footer><ElButton @click="modelDialogOpen = false">取消</ElButton><ElButton type="primary" :loading="saving" @click="saveModel">保存模型</ElButton></template>

@@ -722,7 +722,7 @@ else if (tasks.value.length) {
                 size: (15),
             }, ...__VLS_functionalComponentArgsRest(__VLS_108));
         }
-        if (task.status === 'queued') {
+        if (task.status === 'queued' || (task.status === 'running' && task.upstreamTaskId)) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
                 ...{ onClick: // @ts-ignore
                     (...[$event]) => {
@@ -731,7 +731,7 @@ else if (tasks.value.length) {
                             throw 0;
                         if (!(tasks.value.length))
                             throw 0;
-                        if (!(task.status === 'queued'))
+                        if (!(task.status === 'queued' || (task.status === 'running' && task.upstreamTaskId)))
                             throw 0;
                         return (runAction(task, 'cancel'));
                         // @ts-ignore
@@ -1272,7 +1272,7 @@ if (selectedTask.value) {
         var __VLS_204;
         var __VLS_205;
     }
-    if (selectedTask.value.status === 'queued') {
+    if (selectedTask.value.status === 'queued' || (selectedTask.value.status === 'running' && selectedTask.value.upstreamTaskId)) {
         let __VLS_214;
         /** @ts-ignore @type { | typeof __VLS_components.ElButton | typeof __VLS_components.ElButton} */
         ElButton;
@@ -1295,11 +1295,11 @@ if (selectedTask.value) {
                 void $event;
                 if (!(selectedTask.value))
                     throw 0;
-                if (!(selectedTask.value.status === 'queued'))
+                if (!(selectedTask.value.status === 'queued' || (selectedTask.value.status === 'running' && selectedTask.value.upstreamTaskId)))
                     throw 0;
                 return (runAction(selectedTask.value, 'cancel'));
                 // @ts-ignore
-                [actingTaskId, selectedTask, selectedTask, selectedTask,];
+                [actingTaskId, selectedTask, selectedTask, selectedTask, selectedTask, selectedTask,];
             },
         };
         void __VLS_220;

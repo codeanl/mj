@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useIntervalFn } from "@vueuse/core";
-import { ArrowRight, Bell, ChevronDown, Clock3, Image, LoaderCircle, Music, Moon, Paperclip, Play, Plus, Sparkles, Sun, Type, Video, X, } from "@lucide/vue";
+import { ArrowRight, Bell, ChevronDown, Clock3, Image, FolderOpen, LoaderCircle, Music, Moon, Paperclip, Play, Plus, Sparkles, Sun, Type, Video, X, } from "@lucide/vue";
 import { useAuthStore } from "@/stores/auth";
 import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue";
 import * as assetApi from "@/services/assets";
@@ -34,6 +34,7 @@ const defaultCapabilities = {
 const activeType = ref("image");
 const prompt = ref("");
 const capabilities = ref(defaultCapabilities);
+const videoCatalog = ref([]);
 const selectedModel = ref("");
 const selectedSize = ref("16:9");
 const selectedQuality = ref("2K");
@@ -44,8 +45,14 @@ const soundEnabled = ref(true);
 const watermarkEnabled = ref(false);
 const referenceInput = ref(null);
 const references = ref([]);
+const referencePickerOpen = ref(false);
+const referencePickerLoading = ref(false);
+const referencePickerAssets = ref([]);
+const referencePickerUrls = ref({});
 const darkMode = ref(false);
 const creating = ref(false);
+const pendingRequestId = ref("");
+const pendingRequestSignature = ref("");
 const modelsLoading = ref(true);
 const recentLoading = ref(true);
 const recentRefreshing = ref(false);
@@ -59,11 +66,16 @@ const showHeroBackdrop = ref(false);
 let recentLoadSequence = 0;
 let heroIdleHandle;
 const currentCapability = computed(() => capabilities.value[activeType.value]);
+const selectedVideoProfile = computed(() => videoCatalog.value.find((model) => model.id === selectedModel.value)?.capabilityConfig);
 const videoModes = [
     { value: "text", label: "文生视频" },
     { value: "frames", label: "首尾帧" },
     { value: "reference", label: "全能参考" },
 ];
+const availableVideoModes = computed(() => {
+    const allowed = selectedVideoProfile.value?.modes;
+    return !allowed?.length ? videoModes : videoModes.filter((mode) => allowed.includes(mode.value));
+});
 const referenceLimit = computed(() => activeType.value === "image" ? 3 : videoMode.value === "frames" ? 2 : videoMode.value === "reference" ? 12 : 0);
 const referenceAccept = computed(() => activeType.value === "image" || videoMode.value === "frames"
     ? "image/jpeg,image/png,image/webp"
@@ -84,6 +96,28 @@ const { pause: pauseRecentRefresh, resume: resumeRecentRefresh } = useIntervalFn
         void loadRecentWorks({ silent: true });
 }, Number.isFinite(refreshInterval) && refreshInterval > 0 ? refreshInterval : 3000, { immediate: false });
 watch(hasGeneratingRecentWorks, (hasGenerating) => (hasGenerating ? resumeRecentRefresh() : pauseRecentRefresh()), { immediate: true });
+watch(selectedVideoProfile, (profile) => {
+    if (!profile || activeType.value !== "video")
+        return;
+    const ratios = profile.ratios || [];
+    const qualities = profile.qualities || [];
+    capabilities.value.video.sizes = ratios.map((value) => ({ value, label: value === "adaptive" ? "自适应" : value, width: 0, height: 0 }));
+    capabilities.value.video.qualities = qualities.map((value) => ({ value, label: value }));
+    const min = profile.minDuration || 4, max = profile.maxDuration || 30;
+    capabilities.value.video.durations = Array.from({ length: max - min + 1 }, (_, index) => ({ value: String(min + index), label: `${min + index}秒` }));
+    if (!ratios.includes(selectedSize.value))
+        selectedSize.value = ratios[0] || "";
+    if (!qualities.includes(selectedQuality.value))
+        selectedQuality.value = qualities[0] || "";
+    if (selectedDuration.value < min || selectedDuration.value > max)
+        selectedDuration.value = min;
+    if (!availableVideoModes.value.some((mode) => mode.value === videoMode.value))
+        selectVideoMode(availableVideoModes.value[0]?.value || "text");
+    if (!profile.supportsSound)
+        soundEnabled.value = false;
+    if (!profile.supportsWatermark)
+        watermarkEnabled.value = false;
+}, { immediate: true });
 const promptPlaceholder = computed(() => {
     const labels = {
         image: "描述你希望生成的画面、风格与构图…",
@@ -131,12 +165,21 @@ async function startCreation() {
         await Promise.all(references.value.map(async (reference) => {
             if (reference.assetId)
                 return;
+            if (!reference.file)
+                throw new Error("参考素材文件不存在");
             const uploaded = await assetApi.uploadAsset(reference.file, "创作参考素材");
             reference.assetId = uploaded.id;
         }));
         const referenceAssetIds = references.value.map((reference) => reference.assetId);
         const videoReferences = references.value.map((reference) => ({ assetId: reference.assetId, role: reference.role }));
-        const batch = activeType.value === "video" ? await createVideoGeneration({ prompt: submittedPrompt, model: selectedModel.value, size: selectedSize.value, quality: selectedQuality.value, durationSeconds: selectedDuration.value, soundEnabled: soundEnabled.value, watermarkEnabled: watermarkEnabled.value, mode: videoMode.value, ...(videoReferences.length ? { references: videoReferences } : {}) }) : await createImageGeneration({
+        const requestSignature = JSON.stringify({ type: activeType.value, prompt: submittedPrompt, model: selectedModel.value, size: selectedSize.value, quality: selectedQuality.value, count: selectedCount.value, duration: selectedDuration.value, sound: soundEnabled.value, watermark: watermarkEnabled.value, mode: videoMode.value, references: activeType.value === "video" ? videoReferences : referenceAssetIds });
+        if (!pendingRequestId.value || pendingRequestSignature.value !== requestSignature) {
+            pendingRequestId.value = crypto.randomUUID();
+            pendingRequestSignature.value = requestSignature;
+        }
+        const requestId = pendingRequestId.value;
+        const batch = activeType.value === "video" ? await createVideoGeneration({ requestId, prompt: submittedPrompt, model: selectedModel.value, size: selectedSize.value, quality: selectedQuality.value, durationSeconds: selectedDuration.value, soundEnabled: soundEnabled.value, watermarkEnabled: watermarkEnabled.value, mode: videoMode.value, ...(videoReferences.length ? { references: videoReferences } : {}) }) : await createImageGeneration({
+            requestId,
             prompt: submittedPrompt,
             model: selectedModel.value,
             size: selectedSize.value,
@@ -155,6 +198,8 @@ async function startCreation() {
             ...recentWorks.value.filter((work) => !pendingIDs.has(work.id)),
         ].slice(0, 8);
         authStore.setPointsBalance(batch.pointsRemaining);
+        pendingRequestId.value = "";
+        pendingRequestSignature.value = "";
         notification.success(activeType.value === "video" ? "视频生成任务已创建" : `${batch.tasks.length} 张图片生成任务已创建`);
         await loadRecentWorks({ silent: true });
     }
@@ -165,7 +210,14 @@ async function startCreation() {
         creating.value = false;
     }
 }
+function openReferencePicker() {
+    if (referenceLimit.value <= 0)
+        return;
+    referencePickerOpen.value = true;
+    void loadReferencePickerAssets();
+}
 function chooseReference() {
+    closeReferencePicker();
     if (referenceLimit.value > 0)
         referenceInput.value?.click();
 }
@@ -196,21 +248,78 @@ function selectReference(event) {
         const key = `${file.name}:${file.size}:${file.lastModified}`;
         if (references.value.some((reference) => reference.key === key))
             continue;
-        const role = activeType.value === "image" ? "" : videoMode.value === "frames" ? (references.value.some((reference) => reference.role === "first_frame") ? "last_frame" : "first_frame") : kind === "image" ? "reference_image" : kind === "video" ? "reference_video" : "reference_audio";
-        references.value.push({ key, file, previewUrl: URL.createObjectURL(file), assetId: "", kind, role });
+        references.value.push({ key, file, name: file.name, previewUrl: URL.createObjectURL(file), previewIsImage: kind === "image", assetId: "", kind, role: roleForReference(kind) });
     }
     if (rejected)
         notification.warning(activeType.value === "image" ? "最多添加 3 张 JPG、PNG 或 WebP 参考图" : videoMode.value === "frames" ? "首尾帧只能添加最多 2 张图片" : "全能参考最多 9 张图片、3 个视频、3 个音频，总计 12 个");
 }
 function clearReferencePreviews() {
-    references.value.forEach((reference) => URL.revokeObjectURL(reference.previewUrl));
+    references.value.forEach((reference) => reference.previewUrl && URL.revokeObjectURL(reference.previewUrl));
     references.value = [];
 }
 function removeReference(key) {
     const reference = references.value.find((item) => item.key === key);
-    if (reference)
+    if (reference?.previewUrl)
         URL.revokeObjectURL(reference.previewUrl);
     references.value = references.value.filter((item) => item.key !== key);
+}
+function roleForReference(kind) {
+    if (activeType.value === "image")
+        return "";
+    if (videoMode.value === "frames")
+        return references.value.some((reference) => reference.role === "first_frame") ? "last_frame" : "first_frame";
+    return kind === "image" ? "reference_image" : kind === "video" ? "reference_video" : "reference_audio";
+}
+function referenceKindAllowed(kind) {
+    if ((activeType.value === "image" || videoMode.value === "frames") && kind !== "image")
+        return false;
+    const maximum = { image: videoMode.value === "reference" ? 9 : referenceLimit.value, video: 3, audio: 3 }[kind];
+    return references.value.filter((reference) => reference.kind === kind).length < maximum && references.value.length < referenceLimit.value;
+}
+async function loadReferencePickerAssets() {
+    referencePickerLoading.value = true;
+    revokeReferencePickerUrls();
+    try {
+        const page = await assetApi.listAssets({ page: 1, pageSize: 12, type: activeType.value === "image" || videoMode.value === "frames" ? "image" : undefined });
+        referencePickerAssets.value = page.items.filter((asset) => asset.status === "ready" && !references.value.some((reference) => reference.assetId === asset.id) && referenceKindAllowed(asset.type));
+        const entries = await Promise.all(referencePickerAssets.value.map(async (asset) => {
+            if (asset.type === "audio")
+                return [asset.id, ""];
+            const source = asset.type === "image" ? `${asset.url}?thumbnail=1` : asset.posterUrl;
+            if (!source)
+                return [asset.id, ""];
+            try {
+                const blob = await assetApi.getAssetContent(source);
+                return [asset.id, URL.createObjectURL(blob)];
+            }
+            catch {
+                return [asset.id, ""];
+            }
+        }));
+        referencePickerUrls.value = Object.fromEntries(entries);
+    }
+    catch (error) {
+        notification.error(apiErrorMessage(error, "素材库加载失败"));
+    }
+    finally {
+        referencePickerLoading.value = false;
+    }
+}
+function selectExistingReference(asset) {
+    if (!referenceKindAllowed(asset.type))
+        return;
+    const previewUrl = referencePickerUrls.value[asset.id] || "";
+    delete referencePickerUrls.value[asset.id];
+    references.value.push({ key: `asset:${asset.id}`, name: asset.title, previewUrl, previewIsImage: asset.type !== "audio", assetId: asset.id, kind: asset.type, role: roleForReference(asset.type) });
+    closeReferencePicker();
+}
+function revokeReferencePickerUrls() {
+    Object.values(referencePickerUrls.value).forEach((url) => url && URL.revokeObjectURL(url));
+    referencePickerUrls.value = {};
+}
+function closeReferencePicker() {
+    referencePickerOpen.value = false;
+    revokeReferencePickerUrls();
 }
 function applyCapabilityDefaults() {
     const capability = currentCapability.value;
@@ -256,7 +365,7 @@ async function loadRecentPreviewUrls(works, sequence) {
             return { id: work.id, url: "", signature, created: false };
         if (existingUrls[work.id] && existingSignatures[work.id] === signature)
             return { id: work.id, url: existingUrls[work.id], signature, created: false };
-        const thumbnailURL = work.type === "image" ? `${work.url}${work.url.includes("?") ? "&" : "?"}thumbnail=1` : work.url;
+        const thumbnailURL = work.type === "image" ? `${work.url}${work.url.includes("?") ? "&" : "?"}thumbnail=1` : work.posterUrl || work.url;
         try {
             const blob = await assetApi.getAssetContent(thumbnailURL);
             return { id: work.id, url: URL.createObjectURL(blob), signature, created: true };
@@ -288,6 +397,7 @@ async function loadModels() {
     modelsLoading.value = true;
     try {
         const [images, videos] = await Promise.all([listImageModels(), listVideoModels()]);
+        videoCatalog.value = videos;
         capabilities.value.image.models = images.map((model) => ({ value: model.id, label: model.displayName }));
         capabilities.value.video.models = videos.map((model) => ({ value: model.id, label: model.displayName }));
         capabilities.value.video.enabled = videos.length > 0;
@@ -315,7 +425,7 @@ async function openRecent(work) {
     closeRecent();
     selectedRecent.value = work;
     recentDetailUrl.value = recentPreviewUrls.value[work.id];
-    if (work.type !== "image")
+    if (work.type === "audio")
         return;
     try {
         const original = await assetApi.getAssetContent(work.url);
@@ -338,7 +448,7 @@ function closeRecent() {
     recentDetailUrl.value = "";
     selectedRecent.value = null;
 }
-function useSameParameters(asset, notify = true) {
+async function useSameParameters(asset, notify = true) {
     const task = asset.generation;
     if (!task || (asset.type !== "image" && asset.type !== "video"))
         return;
@@ -356,18 +466,31 @@ function useSameParameters(asset, notify = true) {
         watermarkEnabled.value = task.watermarkEnabled;
         videoMode.value = task.videoMode === "frames" || task.videoMode === "reference" ? task.videoMode : "text";
     }
+    const taskReferences = task.references || [];
+    const restored = await Promise.all(taskReferences.map(async (reference) => {
+        let previewUrl = "";
+        if (reference.type === "image") {
+            try {
+                const blob = await assetApi.getAssetContent(`${reference.url}${reference.url.includes("?") ? "&" : "?"}thumbnail=1`);
+                previewUrl = URL.createObjectURL(blob);
+            }
+            catch { /* keep icon fallback */ }
+        }
+        return { key: `asset:${reference.assetId}`, name: reference.title, previewUrl, previewIsImage: reference.type === "image", assetId: reference.assetId, kind: reference.type, role: (asset.type === "image" ? "" : reference.role) };
+    }));
+    references.value = restored;
     closeRecent();
     document.querySelector(".page-scroll")?.scrollTo({ top: 0, behavior: "smooth" });
     if (notify)
         notification.success("同款参数已回填，可继续修改后生成");
 }
-function restoreSameParameters() {
+async function restoreSameParameters() {
     const raw = sessionStorage.getItem(sameParametersStorageKey);
     if (!raw)
         return;
     sessionStorage.removeItem(sameParametersStorageKey);
     try {
-        useSameParameters(JSON.parse(raw));
+        await useSameParameters(JSON.parse(raw));
     }
     catch {
         notification.warning("同款参数恢复失败");
@@ -389,7 +512,7 @@ function recentMeta(work) {
 }
 onMounted(async () => {
     await Promise.all([loadModels(), loadRecentWorks()]);
-    restoreSameParameters();
+    await restoreSameParameters();
     if ("requestIdleCallback" in window)
         heroIdleHandle = window.requestIdleCallback(() => (showHeroBackdrop.value = true));
     else
@@ -399,6 +522,7 @@ onBeforeUnmount(() => {
     if (heroIdleHandle !== undefined && "cancelIdleCallback" in window)
         window.cancelIdleCallback(heroIdleHandle);
     pauseRecentRefresh();
+    closeReferencePicker();
     clearReferencePreviews();
     closeRecent();
     revokeRecentPreviewUrls();
@@ -425,6 +549,8 @@ __VLS_withDotValue(modelsLoading, {});
 // @ts-ignore
 __VLS_withDotValue(currentCapability, {});
 // @ts-ignore
+__VLS_withDotValue(selectedVideoProfile, {});
+// @ts-ignore
 __VLS_withDotValue(soundEnabled, {});
 // @ts-ignore
 __VLS_withDotValue(watermarkEnabled, {});
@@ -444,6 +570,14 @@ __VLS_withDotValue(recentPreviewUrls, {});
 __VLS_withDotValue(selectedRecent, {});
 // @ts-ignore
 __VLS_withDotValue(recentDetailUrl, {});
+// @ts-ignore
+__VLS_withDotValue(referencePickerOpen, {});
+// @ts-ignore
+__VLS_withDotValue(referencePickerLoading, {});
+// @ts-ignore
+__VLS_withDotValue(referencePickerAssets, {});
+// @ts-ignore
+__VLS_withDotValue(referencePickerUrls, {});
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "home-page" },
     ...{ class: ({ 'home-page--dark': darkMode.value }) },
@@ -627,7 +761,7 @@ if (activeType.value === 'video' && videoMode.value === 'text') {
 }
 else if (!references.value.length) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
-        ...{ onClick: (chooseReference) },
+        ...{ onClick: (openReferencePicker) },
         ...{ class: "reference-slot__pick" },
         type: "button",
         'aria-label': "添加参考素材",
@@ -660,13 +794,13 @@ else {
             ...{ class: "reference-slot__thumb" },
         });
         /** @type {__VLS_StyleScopedClasses['reference-slot__thumb']} */ ;
-        if (reference.kind === 'image') {
+        if (reference.previewIsImage && reference.previewUrl) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.img)({
                 src: (reference.previewUrl),
-                alt: (reference.file.name),
+                alt: (reference.name),
             });
         }
-        else if (reference.kind === 'video') {
+        else if (reference.kind === 'video' && reference.previewUrl) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.video)({
                 src: (reference.previewUrl),
                 muted: true,
@@ -679,19 +813,47 @@ else {
                 ...{ class: "reference-slot__audio" },
             });
             /** @type {__VLS_StyleScopedClasses['reference-slot__audio']} */ ;
-            let __VLS_32;
-            /** @ts-ignore @type { | typeof __VLS_components.Music} */
-            Music;
-            // @ts-ignore
-            const __VLS_33 = __VLS_asFunctionalComponent1(__VLS_32, new __VLS_32({
+            if (reference.kind === 'audio') {
+                let __VLS_32;
+                /** @ts-ignore @type { | typeof __VLS_components.Music} */
+                Music;
                 // @ts-ignore
-                size: (17),
-            }));
-            const __VLS_34 = __VLS_33({
-                size: (17),
-            }, ...__VLS_functionalComponentArgsRest(__VLS_33));
+                const __VLS_33 = __VLS_asFunctionalComponent1(__VLS_32, new __VLS_32({
+                    // @ts-ignore
+                    size: (17),
+                }));
+                const __VLS_34 = __VLS_33({
+                    size: (17),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_33));
+            }
+            else if (reference.kind === 'video') {
+                let __VLS_37;
+                /** @ts-ignore @type { | typeof __VLS_components.Video} */
+                Video;
+                // @ts-ignore
+                const __VLS_38 = __VLS_asFunctionalComponent1(__VLS_37, new __VLS_37({
+                    // @ts-ignore
+                    size: (17),
+                }));
+                const __VLS_39 = __VLS_38({
+                    size: (17),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_38));
+            }
+            else {
+                let __VLS_42;
+                /** @ts-ignore @type { | typeof __VLS_components.Image} */
+                Image;
+                // @ts-ignore
+                const __VLS_43 = __VLS_asFunctionalComponent1(__VLS_42, new __VLS_42({
+                    // @ts-ignore
+                    size: (17),
+                }));
+                const __VLS_44 = __VLS_43({
+                    size: (17),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_43));
+            }
             __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
-            (reference.file.name);
+            (reference.name);
         }
         if (videoMode.value === 'frames') {
             __VLS_asFunctionalElement1(__VLS_intrinsics.em, __VLS_intrinsics.em)({
@@ -716,39 +878,39 @@ else {
             'aria-label': "移除参考素材",
             title: "移除参考素材",
         });
-        let __VLS_37;
+        let __VLS_47;
         /** @ts-ignore @type { | typeof __VLS_components.X} */
         X;
         // @ts-ignore
-        const __VLS_38 = __VLS_asFunctionalComponent1(__VLS_37, new __VLS_37({
+        const __VLS_48 = __VLS_asFunctionalComponent1(__VLS_47, new __VLS_47({
             // @ts-ignore
             size: (12),
         }));
-        const __VLS_39 = __VLS_38({
+        const __VLS_49 = __VLS_48({
             size: (12),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_38));
+        }, ...__VLS_functionalComponentArgsRest(__VLS_48));
         // @ts-ignore
         [];
     }
     if (references.value.length < __VLS_unwrap(referenceLimit, {})) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
-            ...{ onClick: (chooseReference) },
+            ...{ onClick: (openReferencePicker) },
             ...{ class: "reference-slot__add" },
             type: "button",
             'aria-label': "继续添加参考素材",
         });
         /** @type {__VLS_StyleScopedClasses['reference-slot__add']} */ ;
-        let __VLS_42;
+        let __VLS_52;
         /** @ts-ignore @type { | typeof __VLS_components.Plus} */
         Plus;
         // @ts-ignore
-        const __VLS_43 = __VLS_asFunctionalComponent1(__VLS_42, new __VLS_42({
+        const __VLS_53 = __VLS_asFunctionalComponent1(__VLS_52, new __VLS_52({
             // @ts-ignore
             size: (18),
         }));
-        const __VLS_44 = __VLS_43({
+        const __VLS_54 = __VLS_53({
             size: (18),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_43));
+        }, ...__VLS_functionalComponentArgsRest(__VLS_53));
         __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
         (references.value.length);
         (__VLS_unwrap(referenceLimit, {}));
@@ -791,8 +953,8 @@ else if (!currentCapability.value?.models.length) {
         value: "",
     });
 }
-const __VLS_47 = __VLS_tryAsConstant((currentCapability.value?.models || []));
-for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_47))) {
+const __VLS_57 = __VLS_tryAsConstant((currentCapability.value?.models || []));
+for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_57))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
         key: (option.value),
         value: (option.value),
@@ -801,17 +963,17 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_47))) {
     // @ts-ignore
     [references, references, referenceLimit, referenceLimit, prompt, promptPlaceholder, selectedModel, modelsLoading, modelsLoading, currentCapability, currentCapability, currentCapability,];
 }
-let __VLS_48;
+let __VLS_58;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
 ChevronDown;
 // @ts-ignore
-const __VLS_49 = __VLS_asFunctionalComponent1(__VLS_48, new __VLS_48({
+const __VLS_59 = __VLS_asFunctionalComponent1(__VLS_58, new __VLS_58({
     // @ts-ignore
     size: (14),
 }));
-const __VLS_50 = __VLS_49({
+const __VLS_60 = __VLS_59({
     size: (14),
-}, ...__VLS_functionalComponentArgsRest(__VLS_49));
+}, ...__VLS_functionalComponentArgsRest(__VLS_59));
 if (activeType.value === 'video') {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
         ...{ class: "compact-select compact-select--mode" },
@@ -823,27 +985,27 @@ if (activeType.value === 'video') {
         value: (videoMode.value),
         'aria-label': "视频生成模式",
     });
-    const __VLS_53 = __VLS_tryAsConstant((__VLS_unwrap(videoModes, {})));
-    for (const [mode] of __VLS_vFor(__VLS_nonNull(__VLS_53))) {
+    const __VLS_63 = __VLS_tryAsConstant((__VLS_unwrap(availableVideoModes, {})));
+    for (const [mode] of __VLS_vFor(__VLS_nonNull(__VLS_63))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
             key: (mode.value),
             value: (mode.value),
         });
         (mode.label);
         // @ts-ignore
-        [activeType, videoMode, videoModes,];
+        [activeType, videoMode, availableVideoModes,];
     }
-    let __VLS_54;
+    let __VLS_64;
     /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
     ChevronDown;
     // @ts-ignore
-    const __VLS_55 = __VLS_asFunctionalComponent1(__VLS_54, new __VLS_54({
+    const __VLS_65 = __VLS_asFunctionalComponent1(__VLS_64, new __VLS_64({
         // @ts-ignore
         size: (14),
     }));
-    const __VLS_56 = __VLS_55({
+    const __VLS_66 = __VLS_65({
         size: (14),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_55));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_65));
 }
 __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
     ...{ class: "compact-select compact-select--small" },
@@ -855,8 +1017,8 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.select, __VLS_intrinsics.select)({
     'aria-label': "画面比例",
     disabled: (!currentCapability.value?.enabled),
 });
-const __VLS_59 = __VLS_tryAsConstant((currentCapability.value?.sizes || []));
-for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_59))) {
+const __VLS_69 = __VLS_tryAsConstant((currentCapability.value?.sizes || []));
+for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_69))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
         key: (option.value),
         value: (option.value),
@@ -865,17 +1027,17 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_59))) {
     // @ts-ignore
     [currentCapability, currentCapability, selectedSize,];
 }
-let __VLS_60;
+let __VLS_70;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
 ChevronDown;
 // @ts-ignore
-const __VLS_61 = __VLS_asFunctionalComponent1(__VLS_60, new __VLS_60({
+const __VLS_71 = __VLS_asFunctionalComponent1(__VLS_70, new __VLS_70({
     // @ts-ignore
     size: (14),
 }));
-const __VLS_62 = __VLS_61({
+const __VLS_72 = __VLS_71({
     size: (14),
-}, ...__VLS_functionalComponentArgsRest(__VLS_61));
+}, ...__VLS_functionalComponentArgsRest(__VLS_71));
 __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
     ...{ class: "compact-select compact-select--small" },
 });
@@ -886,8 +1048,8 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.select, __VLS_intrinsics.select)({
     'aria-label': "分辨率",
     disabled: (!currentCapability.value?.enabled),
 });
-const __VLS_65 = __VLS_tryAsConstant((currentCapability.value?.qualities || []));
-for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_65))) {
+const __VLS_75 = __VLS_tryAsConstant((currentCapability.value?.qualities || []));
+for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_75))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
         key: (option.value),
         value: (option.value),
@@ -896,17 +1058,17 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_65))) {
     // @ts-ignore
     [currentCapability, currentCapability, selectedQuality,];
 }
-let __VLS_66;
+let __VLS_76;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
 ChevronDown;
 // @ts-ignore
-const __VLS_67 = __VLS_asFunctionalComponent1(__VLS_66, new __VLS_66({
+const __VLS_77 = __VLS_asFunctionalComponent1(__VLS_76, new __VLS_76({
     // @ts-ignore
     size: (14),
 }));
-const __VLS_68 = __VLS_67({
+const __VLS_78 = __VLS_77({
     size: (14),
-}, ...__VLS_functionalComponentArgsRest(__VLS_67));
+}, ...__VLS_functionalComponentArgsRest(__VLS_77));
 if (activeType.value === 'image') {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
         ...{ class: "compact-select compact-select--count" },
@@ -918,8 +1080,8 @@ if (activeType.value === 'image') {
         'aria-label': "生成张数",
         disabled: (!currentCapability.value?.enabled),
     });
-    const __VLS_71 = __VLS_tryAsConstant((4));
-    for (const [count] of __VLS_vFor(__VLS_nonNull(__VLS_71))) {
+    const __VLS_81 = __VLS_tryAsConstant((4));
+    for (const [count] of __VLS_vFor(__VLS_nonNull(__VLS_81))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
             key: (count),
             value: (count),
@@ -928,17 +1090,17 @@ if (activeType.value === 'image') {
         // @ts-ignore
         [activeType, currentCapability, selectedCount,];
     }
-    let __VLS_72;
+    let __VLS_82;
     /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
     ChevronDown;
     // @ts-ignore
-    const __VLS_73 = __VLS_asFunctionalComponent1(__VLS_72, new __VLS_72({
+    const __VLS_83 = __VLS_asFunctionalComponent1(__VLS_82, new __VLS_82({
         // @ts-ignore
         size: (14),
     }));
-    const __VLS_74 = __VLS_73({
+    const __VLS_84 = __VLS_83({
         size: (14),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_73));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_83));
 }
 else {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
@@ -951,8 +1113,8 @@ else {
         'aria-label': "视频时长",
         disabled: (!currentCapability.value?.enabled),
     });
-    const __VLS_77 = __VLS_tryAsConstant((currentCapability.value?.durations || []));
-    for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_77))) {
+    const __VLS_87 = __VLS_tryAsConstant((currentCapability.value?.durations || []));
+    for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_87))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
             key: (option.value),
             value: (Number(option.value)),
@@ -961,25 +1123,28 @@ else {
         // @ts-ignore
         [currentCapability, currentCapability, selectedDuration,];
     }
-    let __VLS_78;
+    let __VLS_88;
     /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
     ChevronDown;
     // @ts-ignore
-    const __VLS_79 = __VLS_asFunctionalComponent1(__VLS_78, new __VLS_78({
+    const __VLS_89 = __VLS_asFunctionalComponent1(__VLS_88, new __VLS_88({
         // @ts-ignore
         size: (14),
     }));
-    const __VLS_80 = __VLS_79({
+    const __VLS_90 = __VLS_89({
         size: (14),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_79));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_89));
 }
 if (activeType.value === 'video') {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
         ...{ class: "compact-toggle" },
+        ...{ class: ({ 'is-disabled': selectedVideoProfile.value?.supportsSound === false }) },
     });
     /** @type {__VLS_StyleScopedClasses['compact-toggle']} */ ;
+    /** @type {__VLS_StyleScopedClasses['is-disabled']} */ ;
     __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
         type: "checkbox",
+        disabled: (selectedVideoProfile.value?.supportsSound === false),
     });
     (soundEnabled.value);
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
@@ -988,10 +1153,13 @@ if (activeType.value === 'video') {
 if (activeType.value === 'video') {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
         ...{ class: "compact-toggle" },
+        ...{ class: ({ 'is-disabled': selectedVideoProfile.value?.supportsWatermark === false }) },
     });
     /** @type {__VLS_StyleScopedClasses['compact-toggle']} */ ;
+    /** @type {__VLS_StyleScopedClasses['is-disabled']} */ ;
     __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
         type: "checkbox",
+        disabled: (selectedVideoProfile.value?.supportsWatermark === false),
     });
     (watermarkEnabled.value);
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
@@ -1005,46 +1173,46 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
 });
 /** @type {__VLS_StyleScopedClasses['create-button']} */ ;
 if (creating.value) {
-    let __VLS_83;
+    let __VLS_93;
     /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
     LoaderCircle;
     // @ts-ignore
-    const __VLS_84 = __VLS_asFunctionalComponent1(__VLS_83, new __VLS_83({
+    const __VLS_94 = __VLS_asFunctionalComponent1(__VLS_93, new __VLS_93({
         // @ts-ignore
         ...{ class: "spin" }, size: (18),
     }));
-    const __VLS_85 = __VLS_84({
+    const __VLS_95 = __VLS_94({
         ...{ class: "spin" },
         size: (18),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_84));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_94));
     /** @type {__VLS_StyleScopedClasses['spin']} */ ;
 }
 else {
-    let __VLS_88;
+    let __VLS_98;
     /** @ts-ignore @type { | typeof __VLS_components.Sparkles} */
     Sparkles;
     // @ts-ignore
-    const __VLS_89 = __VLS_asFunctionalComponent1(__VLS_88, new __VLS_88({
+    const __VLS_99 = __VLS_asFunctionalComponent1(__VLS_98, new __VLS_98({
         // @ts-ignore
         size: (18),
     }));
-    const __VLS_90 = __VLS_89({
+    const __VLS_100 = __VLS_99({
         size: (18),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_89));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_99));
 }
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
 (creating.value ? "提交中" : "开始生成");
-let __VLS_93;
+let __VLS_103;
 /** @ts-ignore @type { | typeof __VLS_components.ArrowRight} */
 ArrowRight;
 // @ts-ignore
-const __VLS_94 = __VLS_asFunctionalComponent1(__VLS_93, new __VLS_93({
+const __VLS_104 = __VLS_asFunctionalComponent1(__VLS_103, new __VLS_103({
     // @ts-ignore
     size: (17),
 }));
-const __VLS_95 = __VLS_94({
+const __VLS_105 = __VLS_104({
     size: (17),
-}, ...__VLS_functionalComponentArgsRest(__VLS_94));
+}, ...__VLS_functionalComponentArgsRest(__VLS_104));
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "home-content" },
 });
@@ -1067,17 +1235,17 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
 });
 /** @type {__VLS_StyleScopedClasses['section-heading__icon']} */ ;
 /** @type {__VLS_StyleScopedClasses['section-heading__icon--blue']} */ ;
-let __VLS_98;
+let __VLS_108;
 /** @ts-ignore @type { | typeof __VLS_components.Clock3} */
 Clock3;
 // @ts-ignore
-const __VLS_99 = __VLS_asFunctionalComponent1(__VLS_98, new __VLS_98({
+const __VLS_109 = __VLS_asFunctionalComponent1(__VLS_108, new __VLS_108({
     // @ts-ignore
     size: (16),
 }));
-const __VLS_100 = __VLS_99({
+const __VLS_110 = __VLS_109({
     size: (16),
-}, ...__VLS_functionalComponentArgsRest(__VLS_99));
+}, ...__VLS_functionalComponentArgsRest(__VLS_109));
 __VLS_asFunctionalElement1(__VLS_intrinsics.h2, __VLS_intrinsics.h2)({});
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: // @ts-ignore
@@ -1085,21 +1253,21 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
             void $event;
             return (router.value.push('/assets'));
             // @ts-ignore
-            [activeType, activeType, selectedModel, modelsLoading, soundEnabled, soundEnabled, watermarkEnabled, watermarkEnabled, creating, creating, creating, router,];
+            [activeType, activeType, selectedModel, modelsLoading, selectedVideoProfile, selectedVideoProfile, selectedVideoProfile, selectedVideoProfile, soundEnabled, soundEnabled, watermarkEnabled, watermarkEnabled, creating, creating, creating, router,];
         } },
     type: "button",
 });
-let __VLS_103;
+let __VLS_113;
 /** @ts-ignore @type { | typeof __VLS_components.ArrowRight} */
 ArrowRight;
 // @ts-ignore
-const __VLS_104 = __VLS_asFunctionalComponent1(__VLS_103, new __VLS_103({
+const __VLS_114 = __VLS_asFunctionalComponent1(__VLS_113, new __VLS_113({
     // @ts-ignore
     size: (15),
 }));
-const __VLS_105 = __VLS_104({
+const __VLS_115 = __VLS_114({
     size: (15),
-}, ...__VLS_functionalComponentArgsRest(__VLS_104));
+}, ...__VLS_functionalComponentArgsRest(__VLS_114));
 if (recentLoading.value) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "media-grid media-grid--recent" },
@@ -1107,8 +1275,8 @@ if (recentLoading.value) {
     });
     /** @type {__VLS_StyleScopedClasses['media-grid']} */ ;
     /** @type {__VLS_StyleScopedClasses['media-grid--recent']} */ ;
-    const __VLS_108 = __VLS_tryAsConstant((8));
-    for (const [index] of __VLS_vFor(__VLS_nonNull(__VLS_108))) {
+    const __VLS_118 = __VLS_tryAsConstant((8));
+    for (const [index] of __VLS_vFor(__VLS_nonNull(__VLS_118))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.span)({
             key: (index),
             ...{ class: "media-tile media-tile--loading" },
@@ -1125,8 +1293,8 @@ else if (recentWorks.value.length) {
     });
     /** @type {__VLS_StyleScopedClasses['media-grid']} */ ;
     /** @type {__VLS_StyleScopedClasses['media-grid--recent']} */ ;
-    const __VLS_109 = __VLS_tryAsConstant((recentWorks.value));
-    for (const [work] of __VLS_vFor(__VLS_nonNull(__VLS_109))) {
+    const __VLS_119 = __VLS_tryAsConstant((recentWorks.value));
+    for (const [work] of __VLS_vFor(__VLS_nonNull(__VLS_119))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
             ...{ onClick: // @ts-ignore
                 (...[$event]) => {
@@ -1145,7 +1313,7 @@ else if (recentWorks.value.length) {
             disabled: (work.status !== 'ready' || !recentPreviewUrls.value[work.id]),
         });
         /** @type {__VLS_StyleScopedClasses['media-tile']} */ ;
-        if (recentPreviewUrls.value[work.id] && work.type === 'image') {
+        if (recentPreviewUrls.value[work.id] && (work.type === 'image' || work.posterUrl)) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.img)({
                 src: (recentPreviewUrls.value[work.id]),
                 alt: (work.title),
@@ -1183,18 +1351,18 @@ else if (recentWorks.value.length) {
                 ...{ class: "media-tile__play" },
             });
             /** @type {__VLS_StyleScopedClasses['media-tile__play']} */ ;
-            let __VLS_110;
+            let __VLS_120;
             /** @ts-ignore @type { | typeof __VLS_components.Play} */
             Play;
             // @ts-ignore
-            const __VLS_111 = __VLS_asFunctionalComponent1(__VLS_110, new __VLS_110({
+            const __VLS_121 = __VLS_asFunctionalComponent1(__VLS_120, new __VLS_120({
                 // @ts-ignore
                 size: (16), fill: "currentColor",
             }));
-            const __VLS_112 = __VLS_111({
+            const __VLS_122 = __VLS_121({
                 size: (16),
                 fill: "currentColor",
-            }, ...__VLS_functionalComponentArgsRest(__VLS_111));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_121));
         }
         __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
             ...{ class: "media-tile__caption" },
@@ -1217,33 +1385,206 @@ else {
     /** @type {__VLS_StyleScopedClasses['recent-empty']} */ ;
 }
 if (selectedRecent.value && recentDetailUrl.value) {
-    const __VLS_115 = AssetPreviewDialog;
+    const __VLS_125 = AssetPreviewDialog;
     // @ts-ignore
-    const __VLS_116 = __VLS_asFunctionalComponent1(__VLS_115, new __VLS_115({
+    const __VLS_126 = __VLS_asFunctionalComponent1(__VLS_125, new __VLS_125({
         // @ts-ignore
         ...{ 'onClose': {} }, ...{ 'onRecreate': {} }, asset: (selectedRecent.value), mediaUrl: (recentDetailUrl.value),
     }));
-    const __VLS_117 = __VLS_116({
+    const __VLS_127 = __VLS_126({
         ...{ 'onClose': {} },
         ...{ 'onRecreate': {} },
         asset: (selectedRecent.value),
         mediaUrl: (recentDetailUrl.value),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_116));
-    let __VLS_120;
-    const __VLS_121 = {
-        /** @type {typeof __VLS_120.close} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_126));
+    let __VLS_130;
+    const __VLS_131 = {
+        /** @type {typeof __VLS_130.close} */
         onClose: (closeRecent),
     };
-    void __VLS_121;
-    const __VLS_122 = {
-        /** @type {typeof __VLS_120.recreate} */
+    void __VLS_131;
+    const __VLS_132 = {
+        /** @type {typeof __VLS_130.recreate} */
         onRecreate: (useSameParameters),
     };
-    void __VLS_122;
-    var __VLS_118;
-    var __VLS_119;
+    void __VLS_132;
+    var __VLS_128;
+    var __VLS_129;
+}
+if (referencePickerOpen.value) {
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ onClick: (closeReferencePicker) },
+        ...{ class: "reference-picker" },
+        role: "dialog",
+        'aria-modal': "true",
+        'aria-label': "选择参考素材",
+    });
+    /** @type {__VLS_StyleScopedClasses['reference-picker']} */ ;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ class: "reference-picker__panel" },
+    });
+    /** @type {__VLS_StyleScopedClasses['reference-picker__panel']} */ ;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.header, __VLS_intrinsics.header)({});
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({});
+    __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
+    __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
+    (__VLS_unwrap(referenceHint, {}));
+    __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+        ...{ onClick: (closeReferencePicker) },
+        type: "button",
+        title: "关闭",
+        'aria-label': "关闭素材选择",
+    });
+    let __VLS_133;
+    /** @ts-ignore @type { | typeof __VLS_components.X} */
+    X;
+    // @ts-ignore
+    const __VLS_134 = __VLS_asFunctionalComponent1(__VLS_133, new __VLS_133({
+        // @ts-ignore
+        size: (18),
+    }));
+    const __VLS_135 = __VLS_134({
+        size: (18),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_134));
+    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+        ...{ class: "reference-picker__toolbar" },
+    });
+    /** @type {__VLS_StyleScopedClasses['reference-picker__toolbar']} */ ;
+    __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+        ...{ onClick: (chooseReference) },
+        type: "button",
+    });
+    let __VLS_138;
+    /** @ts-ignore @type { | typeof __VLS_components.Paperclip} */
+    Paperclip;
+    // @ts-ignore
+    const __VLS_139 = __VLS_asFunctionalComponent1(__VLS_138, new __VLS_138({
+        // @ts-ignore
+        size: (15),
+    }));
+    const __VLS_140 = __VLS_139({
+        size: (15),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_139));
+    __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
+    (references.value.length);
+    (__VLS_unwrap(referenceLimit, {}));
+    if (referencePickerLoading.value) {
+        __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+            ...{ class: "reference-picker__state" },
+        });
+        /** @type {__VLS_StyleScopedClasses['reference-picker__state']} */ ;
+        let __VLS_143;
+        /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
+        LoaderCircle;
+        // @ts-ignore
+        const __VLS_144 = __VLS_asFunctionalComponent1(__VLS_143, new __VLS_143({
+            // @ts-ignore
+            ...{ class: "spin" }, size: (22),
+        }));
+        const __VLS_145 = __VLS_144({
+            ...{ class: "spin" },
+            size: (22),
+        }, ...__VLS_functionalComponentArgsRest(__VLS_144));
+        /** @type {__VLS_StyleScopedClasses['spin']} */ ;
+    }
+    else if (referencePickerAssets.value.length) {
+        __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+            ...{ class: "reference-picker__grid" },
+        });
+        /** @type {__VLS_StyleScopedClasses['reference-picker__grid']} */ ;
+        const __VLS_148 = __VLS_tryAsConstant((referencePickerAssets.value));
+        for (const [asset] of __VLS_vFor(__VLS_nonNull(__VLS_148))) {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                ...{ onClick: // @ts-ignore
+                    (...[$event]) => {
+                        void $event;
+                        if (!(referencePickerOpen.value))
+                            throw 0;
+                        if (!!(referencePickerLoading.value))
+                            throw 0;
+                        if (!(referencePickerAssets.value.length))
+                            throw 0;
+                        return (selectExistingReference(asset));
+                        // @ts-ignore
+                        [references, referenceHint, referenceLimit, selectedRecent, selectedRecent, recentDetailUrl, recentDetailUrl, referencePickerOpen, referencePickerLoading, referencePickerAssets, referencePickerAssets,];
+                    } },
+                key: (asset.id),
+                type: "button",
+                title: (asset.title),
+            });
+            if (referencePickerUrls.value[asset.id]) {
+                __VLS_asFunctionalElement1(__VLS_intrinsics.img)({
+                    src: (referencePickerUrls.value[asset.id]),
+                    alt: (asset.title),
+                });
+            }
+            else {
+                __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
+                if (asset.type === 'audio') {
+                    let __VLS_149;
+                    /** @ts-ignore @type { | typeof __VLS_components.Music} */
+                    Music;
+                    // @ts-ignore
+                    const __VLS_150 = __VLS_asFunctionalComponent1(__VLS_149, new __VLS_149({
+                        // @ts-ignore
+                        size: (22),
+                    }));
+                    const __VLS_151 = __VLS_150({
+                        size: (22),
+                    }, ...__VLS_functionalComponentArgsRest(__VLS_150));
+                }
+                else if (asset.type === 'video') {
+                    let __VLS_154;
+                    /** @ts-ignore @type { | typeof __VLS_components.Video} */
+                    Video;
+                    // @ts-ignore
+                    const __VLS_155 = __VLS_asFunctionalComponent1(__VLS_154, new __VLS_154({
+                        // @ts-ignore
+                        size: (22),
+                    }));
+                    const __VLS_156 = __VLS_155({
+                        size: (22),
+                    }, ...__VLS_functionalComponentArgsRest(__VLS_155));
+                }
+                else {
+                    let __VLS_159;
+                    /** @ts-ignore @type { | typeof __VLS_components.Image} */
+                    Image;
+                    // @ts-ignore
+                    const __VLS_160 = __VLS_asFunctionalComponent1(__VLS_159, new __VLS_159({
+                        // @ts-ignore
+                        size: (22),
+                    }));
+                    const __VLS_161 = __VLS_160({
+                        size: (22),
+                    }, ...__VLS_functionalComponentArgsRest(__VLS_160));
+                }
+            }
+            __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
+            (asset.title);
+            // @ts-ignore
+            [referencePickerUrls, referencePickerUrls,];
+        }
+    }
+    else {
+        __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
+            ...{ class: "reference-picker__state" },
+        });
+        /** @type {__VLS_StyleScopedClasses['reference-picker__state']} */ ;
+        let __VLS_164;
+        /** @ts-ignore @type { | typeof __VLS_components.FolderOpen} */
+        FolderOpen;
+        // @ts-ignore
+        const __VLS_165 = __VLS_asFunctionalComponent1(__VLS_164, new __VLS_164({
+            // @ts-ignore
+            size: (24),
+        }));
+        const __VLS_166 = __VLS_165({
+            size: (24),
+        }, ...__VLS_functionalComponentArgsRest(__VLS_165));
+    }
 }
 // @ts-ignore
-[selectedRecent, selectedRecent, recentDetailUrl, recentDetailUrl,];
+[];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

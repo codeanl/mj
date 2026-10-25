@@ -105,3 +105,18 @@ func TestMiniMaxH3VideoProviderMapsTerminalFailure(t *testing.T) {
 		t.Fatalf("failed result: %#v, %v", result, err)
 	}
 }
+
+func TestMiniMaxH3VideoProviderCancelsOriginalTask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/minimax/v2/video_generation/upstream-cancel" || r.Header.Get("Authorization") != "Bearer sk-ml-test" {
+			t.Fatalf("unexpected cancel request: %s %s %q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	provider := NewMiniMaxH3VideoProvider(time.Second, 1024)
+	err := provider.Cancel(context.Background(), Task{UpstreamTaskID: "upstream-cancel"}, modelchannels.ResolvedModel{BaseURL: server.URL, APIKey: "sk-ml-test", Protocol: "compshare-minimax-h3"})
+	if err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+}

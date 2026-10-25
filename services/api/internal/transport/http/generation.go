@@ -39,6 +39,39 @@ func (handlers generationHandlers) Retry(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"taskId": result.Task.ID, "status": result.Task.Status, "pointsRemaining": result.PointsRemaining}, Msg: "任务已重新排队"})
 }
 
+func (handlers generationHandlers) Cancel(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	task, err := handlers.service.Get(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		handlers.writeGenerationError(w, err)
+		return
+	}
+	if task.Status == generation.TaskRunning && task.UpstreamTaskID != "" {
+		if err := handlers.recovery.CancelUpstream(r.Context(), user.ID, task.ID); err != nil {
+			handlers.logger.Error("upstream generation cancel failed", "task_id", task.ID, "error", err)
+			writeJSON(w, http.StatusBadGateway, response{Code: 50221, Msg: "上游任务取消失败，请稍后重试"})
+			return
+		}
+	}
+	result, err := handlers.adminGenerations.CancelForUser(r.Context(), user.ID, task.ID)
+	if err != nil {
+		if errors.Is(err, admingenerations.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, response{Code: 40411, Msg: "生成任务不存在"})
+		} else if errors.Is(err, admingenerations.ErrInvalidState) {
+			writeJSON(w, http.StatusConflict, response{Code: 40944, Msg: "当前任务不能取消"})
+		} else {
+			handlers.logger.Error("generation cancel failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, response{Code: 50022, Msg: "取消任务失败"})
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"taskId": result.Task.ID, "status": result.Task.Status, "pointsRemaining": result.PointsRemaining}, Msg: "任务已取消"})
+}
+
 func newGenerationHandlers(service *generation.Service, adminGenerations *admingenerations.Service, recovery *generation.RecoveryService, logger *slog.Logger) generationHandlers {
 	return generationHandlers{service: service, adminGenerations: adminGenerations, recovery: recovery, logger: logger}
 }
@@ -68,6 +101,7 @@ func (handlers generationHandlers) CreateImage(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var input struct {
+		RequestID         string   `json:"requestId"`
 		Prompt            string   `json:"prompt"`
 		Model             string   `json:"model"`
 		Size              string   `json:"size"`
@@ -80,7 +114,7 @@ func (handlers generationHandlers) CreateImage(w http.ResponseWriter, r *http.Re
 		return
 	}
 	batch, err := handlers.service.CreateImage(r.Context(), generation.CreateImageInput{
-		UserID: user.ID, Prompt: input.Prompt, Model: input.Model, Size: input.Size, Quality: input.Quality,
+		RequestID: input.RequestID, UserID: user.ID, Prompt: input.Prompt, Model: input.Model, Size: input.Size, Quality: input.Quality,
 		Count: input.Count, ReferenceAssetIDs: input.ReferenceAssetIDs,
 	})
 	if err != nil {
@@ -97,6 +131,7 @@ func (handlers generationHandlers) CreateVideo(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var input struct {
+		RequestID        string                      `json:"requestId"`
 		Prompt           string                      `json:"prompt"`
 		Model            string                      `json:"model"`
 		Size             string                      `json:"size"`
@@ -112,7 +147,7 @@ func (handlers generationHandlers) CreateVideo(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusBadRequest, response{Code: 40021, Msg: "请求参数格式不正确"})
 		return
 	}
-	batch, err := handlers.service.CreateVideo(r.Context(), generation.CreateVideoInput{UserID: user.ID, Prompt: input.Prompt, Model: input.Model, Size: input.Size, Quality: input.Quality, DurationSeconds: input.DurationSeconds, SoundEnabled: input.SoundEnabled, WatermarkEnabled: input.WatermarkEnabled, Mode: input.Mode, References: input.References})
+	batch, err := handlers.service.CreateVideo(r.Context(), generation.CreateVideoInput{RequestID: input.RequestID, UserID: user.ID, Prompt: input.Prompt, Model: input.Model, Size: input.Size, Quality: input.Quality, DurationSeconds: input.DurationSeconds, SoundEnabled: input.SoundEnabled, WatermarkEnabled: input.WatermarkEnabled, Mode: input.Mode, References: input.References})
 	if err != nil {
 		handlers.writeGenerationError(w, err)
 		return
@@ -149,6 +184,8 @@ func (handlers generationHandlers) GetTask(w http.ResponseWriter, r *http.Reques
 
 func (handlers generationHandlers) writeGenerationError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, generation.ErrInvalidRequestID):
+		writeJSON(w, http.StatusBadRequest, response{Code: 40020, Msg: "生成请求标识不正确"})
 	case errors.Is(err, generation.ErrInvalidPrompt):
 		writeJSON(w, http.StatusBadRequest, response{Code: 40022, Msg: "提示词长度应为 2-2000 个字符"})
 	case errors.Is(err, generation.ErrUnsupportedOptions):

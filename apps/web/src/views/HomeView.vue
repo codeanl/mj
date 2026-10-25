@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Clock3,
   Image,
+  FolderOpen,
   LoaderCircle,
   Music,
   Moon,
@@ -31,7 +32,7 @@ import {
   type VideoReferenceRole,
 } from "@/services/generation"
 import { apiErrorMessage } from "@/services/http"
-import { listImageModels, listVideoModels } from "@/services/models"
+import { listImageModels, listVideoModels, type PublicModel } from "@/services/models"
 import { notification } from "@/services/notifications"
 
 const authStore = useAuthStore()
@@ -62,6 +63,7 @@ const defaultCapabilities: GenerationCapabilities = {
 const activeType = ref("image")
 const prompt = ref("")
 const capabilities = ref<GenerationCapabilities>(defaultCapabilities)
+const videoCatalog = ref<PublicModel[]>([])
 const selectedModel = ref("")
 const selectedSize = ref("16:9")
 const selectedQuality = ref("2K")
@@ -72,10 +74,16 @@ const soundEnabled = ref(true)
 const watermarkEnabled = ref(false)
 const referenceInput = ref<HTMLInputElement | null>(null)
 type ReferenceKind = "image" | "video" | "audio"
-type ReferenceDraft = { key: string; file: File; previewUrl: string; assetId: string; kind: ReferenceKind; role: VideoReferenceRole | "" }
+type ReferenceDraft = { key: string; file?: File; name: string; previewUrl: string; previewIsImage: boolean; assetId: string; kind: ReferenceKind; role: VideoReferenceRole | "" }
 const references = ref<ReferenceDraft[]>([])
+const referencePickerOpen = ref(false)
+const referencePickerLoading = ref(false)
+const referencePickerAssets = ref<assetApi.Asset[]>([])
+const referencePickerUrls = ref<Record<string, string>>({})
 const darkMode = ref(false)
 const creating = ref(false)
+const pendingRequestId = ref("")
+const pendingRequestSignature = ref("")
 const modelsLoading = ref(true)
 const recentLoading = ref(true)
 const recentRefreshing = ref(false)
@@ -90,11 +98,16 @@ let recentLoadSequence = 0
 let heroIdleHandle: number | undefined
 
 const currentCapability = computed(() => capabilities.value[activeType.value as keyof GenerationCapabilities])
+const selectedVideoProfile = computed(() => videoCatalog.value.find((model) => model.id === selectedModel.value)?.capabilityConfig)
 const videoModes: Array<{ value: VideoGenerationMode; label: string }> = [
   { value: "text", label: "文生视频" },
   { value: "frames", label: "首尾帧" },
   { value: "reference", label: "全能参考" },
 ]
+const availableVideoModes = computed(() => {
+	const allowed=selectedVideoProfile.value?.modes
+	return !allowed?.length ? videoModes : videoModes.filter((mode)=>allowed.includes(mode.value))
+})
 const referenceLimit = computed(() => activeType.value === "image" ? 3 : videoMode.value === "frames" ? 2 : videoMode.value === "reference" ? 12 : 0)
 const referenceAccept = computed(() => activeType.value === "image" || videoMode.value === "frames"
   ? "image/jpeg,image/png,image/webp"
@@ -117,6 +130,20 @@ const { pause: pauseRecentRefresh, resume: resumeRecentRefresh } = useIntervalFn
 )
 
 watch(hasGeneratingRecentWorks, (hasGenerating) => (hasGenerating ? resumeRecentRefresh() : pauseRecentRefresh()), { immediate: true })
+watch(selectedVideoProfile, (profile) => {
+	if (!profile || activeType.value !== "video") return
+	const ratios=profile.ratios || [];const qualities=profile.qualities || []
+	capabilities.value.video.sizes=ratios.map((value)=>({value,label:value==="adaptive"?"自适应":value,width:0,height:0}))
+	capabilities.value.video.qualities=qualities.map((value)=>({value,label:value}))
+	const min=profile.minDuration||4,max=profile.maxDuration||30
+	capabilities.value.video.durations=Array.from({length:max-min+1},(_,index)=>({value:String(min+index),label:`${min+index}秒`}))
+	if(!ratios.includes(selectedSize.value))selectedSize.value=ratios[0]||""
+	if(!qualities.includes(selectedQuality.value))selectedQuality.value=qualities[0]||""
+	if(selectedDuration.value<min||selectedDuration.value>max)selectedDuration.value=min
+	if(!availableVideoModes.value.some((mode)=>mode.value===videoMode.value))selectVideoMode(availableVideoModes.value[0]?.value||"text")
+	if(!profile.supportsSound)soundEnabled.value=false
+	if(!profile.supportsWatermark)watermarkEnabled.value=false
+},{immediate:true})
 
 const promptPlaceholder = computed(() => {
   const labels: Record<string, string> = {
@@ -165,12 +192,17 @@ async function startCreation() {
     const submittedPrompt = prompt.value.trim()
 	await Promise.all(references.value.map(async (reference) => {
 	  if (reference.assetId) return
+	  if (!reference.file) throw new Error("参考素材文件不存在")
 	  const uploaded = await assetApi.uploadAsset(reference.file, "创作参考素材")
 	  reference.assetId = uploaded.id
 	}))
 	const referenceAssetIds = references.value.map((reference) => reference.assetId)
 	const videoReferences = references.value.map((reference) => ({ assetId: reference.assetId, role: reference.role as VideoReferenceRole }))
-	const batch = activeType.value==="video" ? await createVideoGeneration({prompt:submittedPrompt,model:selectedModel.value,size:selectedSize.value,quality:selectedQuality.value,durationSeconds:selectedDuration.value,soundEnabled:soundEnabled.value,watermarkEnabled:watermarkEnabled.value,mode:videoMode.value,...(videoReferences.length?{references:videoReferences}:{})}) : await createImageGeneration({
+	const requestSignature=JSON.stringify({type:activeType.value,prompt:submittedPrompt,model:selectedModel.value,size:selectedSize.value,quality:selectedQuality.value,count:selectedCount.value,duration:selectedDuration.value,sound:soundEnabled.value,watermark:watermarkEnabled.value,mode:videoMode.value,references:activeType.value==="video"?videoReferences:referenceAssetIds})
+	if(!pendingRequestId.value||pendingRequestSignature.value!==requestSignature){pendingRequestId.value=crypto.randomUUID();pendingRequestSignature.value=requestSignature}
+	const requestId=pendingRequestId.value
+	const batch = activeType.value==="video" ? await createVideoGeneration({requestId,prompt:submittedPrompt,model:selectedModel.value,size:selectedSize.value,quality:selectedQuality.value,durationSeconds:selectedDuration.value,soundEnabled:soundEnabled.value,watermarkEnabled:watermarkEnabled.value,mode:videoMode.value,...(videoReferences.length?{references:videoReferences}:{})}) : await createImageGeneration({
+      requestId,
       prompt: submittedPrompt,
       model: selectedModel.value,
       size: selectedSize.value,
@@ -189,6 +221,7 @@ async function startCreation() {
       ...recentWorks.value.filter((work) => !pendingIDs.has(work.id)),
     ].slice(0, 8)
     authStore.setPointsBalance(batch.pointsRemaining)
+	pendingRequestId.value="";pendingRequestSignature.value=""
 	notification.success(activeType.value==="video"?"视频生成任务已创建":`${batch.tasks.length} 张图片生成任务已创建`)
     await loadRecentWorks({ silent: true })
   } catch (error) {
@@ -198,7 +231,14 @@ async function startCreation() {
   }
 }
 
+function openReferencePicker() {
+  if (referenceLimit.value <= 0) return
+  referencePickerOpen.value = true
+  void loadReferencePickerAssets()
+}
+
 function chooseReference() {
+  closeReferencePicker()
   if (referenceLimit.value > 0) referenceInput.value?.click()
 }
 
@@ -227,21 +267,73 @@ function selectReference(event: Event) {
 	  }
 	  const key = `${file.name}:${file.size}:${file.lastModified}`
 	  if (references.value.some((reference) => reference.key === key)) continue
-	  const role: VideoReferenceRole | "" = activeType.value === "image" ? "" : videoMode.value === "frames" ? (references.value.some((reference) => reference.role === "first_frame") ? "last_frame" : "first_frame") : kind === "image" ? "reference_image" : kind === "video" ? "reference_video" : "reference_audio"
-	  references.value.push({ key, file, previewUrl: URL.createObjectURL(file), assetId: "", kind, role })
+	  references.value.push({ key, file, name: file.name, previewUrl: URL.createObjectURL(file), previewIsImage: kind === "image", assetId: "", kind, role: roleForReference(kind) })
   }
 	if (rejected) notification.warning(activeType.value === "image" ? "最多添加 3 张 JPG、PNG 或 WebP 参考图" : videoMode.value === "frames" ? "首尾帧只能添加最多 2 张图片" : "全能参考最多 9 张图片、3 个视频、3 个音频，总计 12 个")
 }
 
 function clearReferencePreviews() {
-	references.value.forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
+	references.value.forEach((reference) => reference.previewUrl && URL.revokeObjectURL(reference.previewUrl))
 	references.value = []
 }
 
 function removeReference(key: string) {
 	const reference = references.value.find((item) => item.key === key)
-	if (reference) URL.revokeObjectURL(reference.previewUrl)
+	if (reference?.previewUrl) URL.revokeObjectURL(reference.previewUrl)
 	references.value = references.value.filter((item) => item.key !== key)
+}
+
+function roleForReference(kind: ReferenceKind): VideoReferenceRole | "" {
+	if (activeType.value === "image") return ""
+	if (videoMode.value === "frames") return references.value.some((reference) => reference.role === "first_frame") ? "last_frame" : "first_frame"
+	return kind === "image" ? "reference_image" : kind === "video" ? "reference_video" : "reference_audio"
+}
+
+function referenceKindAllowed(kind: ReferenceKind) {
+	if ((activeType.value === "image" || videoMode.value === "frames") && kind !== "image") return false
+	const maximum = { image: videoMode.value === "reference" ? 9 : referenceLimit.value, video: 3, audio: 3 }[kind]
+	return references.value.filter((reference) => reference.kind === kind).length < maximum && references.value.length < referenceLimit.value
+}
+
+async function loadReferencePickerAssets() {
+	referencePickerLoading.value = true
+	revokeReferencePickerUrls()
+	try {
+		const page = await assetApi.listAssets({ page: 1, pageSize: 12, type: activeType.value === "image" || videoMode.value === "frames" ? "image" : undefined })
+		referencePickerAssets.value = page.items.filter((asset) => asset.status === "ready" && !references.value.some((reference) => reference.assetId === asset.id) && referenceKindAllowed(asset.type))
+		const entries = await Promise.all(referencePickerAssets.value.map(async (asset) => {
+			if (asset.type === "audio") return [asset.id, ""] as const
+			const source = asset.type === "image" ? `${asset.url}?thumbnail=1` : asset.posterUrl
+			if (!source) return [asset.id, ""] as const
+			try {
+				const blob = await assetApi.getAssetContent(source)
+				return [asset.id, URL.createObjectURL(blob)] as const
+			} catch { return [asset.id, ""] as const }
+		}))
+		referencePickerUrls.value = Object.fromEntries(entries)
+	} catch (error) {
+		notification.error(apiErrorMessage(error, "素材库加载失败"))
+	} finally {
+		referencePickerLoading.value = false
+	}
+}
+
+function selectExistingReference(asset: assetApi.Asset) {
+	if (!referenceKindAllowed(asset.type)) return
+	const previewUrl = referencePickerUrls.value[asset.id] || ""
+	delete referencePickerUrls.value[asset.id]
+	references.value.push({ key: `asset:${asset.id}`, name: asset.title, previewUrl, previewIsImage: asset.type !== "audio", assetId: asset.id, kind: asset.type, role: roleForReference(asset.type) })
+	closeReferencePicker()
+}
+
+function revokeReferencePickerUrls() {
+	Object.values(referencePickerUrls.value).forEach((url) => url && URL.revokeObjectURL(url))
+	referencePickerUrls.value = {}
+}
+
+function closeReferencePicker() {
+	referencePickerOpen.value = false
+	revokeReferencePickerUrls()
 }
 
 function applyCapabilityDefaults() {
@@ -281,7 +373,7 @@ async function loadRecentPreviewUrls(works: assetApi.Asset[], sequence: number) 
     const signature = `${work.status}:${work.url}:${work.sizeBytes}`
     if (work.status !== "ready" || !work.url) return { id: work.id, url: "", signature, created: false }
     if (existingUrls[work.id] && existingSignatures[work.id] === signature) return { id: work.id, url: existingUrls[work.id], signature, created: false }
-    const thumbnailURL = work.type === "image" ? `${work.url}${work.url.includes("?") ? "&" : "?"}thumbnail=1` : work.url
+    const thumbnailURL = work.type === "image" ? `${work.url}${work.url.includes("?") ? "&" : "?"}thumbnail=1` : work.posterUrl || work.url
     try {
       const blob = await assetApi.getAssetContent(thumbnailURL)
       return { id: work.id, url: URL.createObjectURL(blob), signature, created: true }
@@ -311,6 +403,7 @@ async function loadModels() {
   modelsLoading.value = true
   try {
 	  const [images,videos] = await Promise.all([listImageModels(),listVideoModels()])
+	  videoCatalog.value=videos
 	  capabilities.value.image.models = images.map((model) => ({ value: model.id, label: model.displayName }))
 	  capabilities.value.video.models = videos.map((model) => ({ value: model.id, label: model.displayName }));capabilities.value.video.enabled=videos.length>0
 	  const current=activeType.value==="video"?videos:images;if (!current.some((model) => model.id === selectedModel.value)) selectedModel.value = current[0]?.id || ""
@@ -334,7 +427,7 @@ async function openRecent(work: assetApi.Asset) {
   closeRecent()
   selectedRecent.value = work
   recentDetailUrl.value = recentPreviewUrls.value[work.id]
-  if (work.type !== "image") return
+  if (work.type === "audio") return
   try {
     const original = await assetApi.getAssetContent(work.url)
     const objectUrl = URL.createObjectURL(original)
@@ -356,7 +449,7 @@ function closeRecent() {
   selectedRecent.value = null
 }
 
-function useSameParameters(asset: assetApi.Asset, notify = true) {
+async function useSameParameters(asset: assetApi.Asset, notify = true) {
   const task = asset.generation
   if (!task || (asset.type !== "image" && asset.type !== "video")) return
   clearReferencePreviews()
@@ -373,17 +466,26 @@ function useSameParameters(asset: assetApi.Asset, notify = true) {
     watermarkEnabled.value = task.watermarkEnabled
     videoMode.value = task.videoMode === "frames" || task.videoMode === "reference" ? task.videoMode : "text"
   }
+	const taskReferences=task.references||[]
+	const restored=await Promise.all(taskReferences.map(async(reference)=>{
+		let previewUrl=""
+		if(reference.type==="image"){
+			try{const blob=await assetApi.getAssetContent(`${reference.url}${reference.url.includes("?")?"&":"?"}thumbnail=1`);previewUrl=URL.createObjectURL(blob)}catch{/* keep icon fallback */}
+		}
+		return {key:`asset:${reference.assetId}`,name:reference.title,previewUrl,previewIsImage:reference.type==="image",assetId:reference.assetId,kind:reference.type,role:(asset.type==="image"?"":reference.role) as VideoReferenceRole|""}
+	}))
+	references.value=restored
   closeRecent()
   document.querySelector<HTMLElement>(".page-scroll")?.scrollTo({ top: 0, behavior: "smooth" })
   if (notify) notification.success("同款参数已回填，可继续修改后生成")
 }
 
-function restoreSameParameters() {
+async function restoreSameParameters() {
   const raw = sessionStorage.getItem(sameParametersStorageKey)
   if (!raw) return
   sessionStorage.removeItem(sameParametersStorageKey)
   try {
-    useSameParameters(JSON.parse(raw) as assetApi.Asset)
+	await useSameParameters(JSON.parse(raw) as assetApi.Asset)
   } catch {
     notification.warning("同款参数恢复失败")
   }
@@ -403,13 +505,14 @@ function recentMeta(work: assetApi.Asset) {
 
 onMounted(async () => {
 	await Promise.all([loadModels(), loadRecentWorks()])
-	restoreSameParameters()
+	await restoreSameParameters()
   if ("requestIdleCallback" in window) heroIdleHandle = window.requestIdleCallback(() => (showHeroBackdrop.value = true))
   else requestAnimationFrame(() => (showHeroBackdrop.value = true))
 })
 onBeforeUnmount(() => {
   if (heroIdleHandle !== undefined && "cancelIdleCallback" in window) window.cancelIdleCallback(heroIdleHandle)
 	pauseRecentRefresh()
+	closeReferencePicker()
 	clearReferencePreviews()
   closeRecent()
   revokeRecentPreviewUrls()
@@ -460,18 +563,18 @@ onBeforeUnmount(() => {
 			<div v-if="activeType === 'video' && videoMode === 'text'" class="reference-slot__pick reference-slot__pick--static">
 			  <Type :size="21" /><strong>文生视频</strong><span>{{ referenceHint }}</span>
 			</div>
-			<button v-else-if="!references.length" class="reference-slot__pick" type="button" aria-label="添加参考素材" @click="chooseReference">
+			<button v-else-if="!references.length" class="reference-slot__pick" type="button" aria-label="添加参考素材" @click="openReferencePicker">
 			  <Paperclip :size="21" /><strong>添加参考</strong><span>{{ referenceHint }}</span>
 			</button>
 			<div v-else class="reference-slot__grid">
 			  <div v-for="reference in references" :key="reference.key" class="reference-slot__thumb">
-				<img v-if="reference.kind === 'image'" :src="reference.previewUrl" :alt="reference.file.name" />
-				<video v-else-if="reference.kind === 'video'" :src="reference.previewUrl" muted preload="metadata" aria-hidden="true" />
-				<span v-else class="reference-slot__audio"><Music :size="17" /><small>{{ reference.file.name }}</small></span>
+				<img v-if="reference.previewIsImage && reference.previewUrl" :src="reference.previewUrl" :alt="reference.name" />
+				<video v-else-if="reference.kind === 'video' && reference.previewUrl" :src="reference.previewUrl" muted preload="metadata" aria-hidden="true" />
+				<span v-else class="reference-slot__audio"><Music v-if="reference.kind === 'audio'" :size="17" /><Video v-else-if="reference.kind === 'video'" :size="17" /><Image v-else :size="17" /><small>{{ reference.name }}</small></span>
 				<em v-if="videoMode === 'frames'" class="reference-slot__role">{{ reference.role === 'first_frame' ? '首帧' : '尾帧' }}</em>
 				<button type="button" aria-label="移除参考素材" title="移除参考素材" @click="removeReference(reference.key)"><X :size="12" /></button>
 			  </div>
-			  <button v-if="references.length < referenceLimit" class="reference-slot__add" type="button" aria-label="继续添加参考素材" @click="chooseReference"><Plus :size="18" /><span>{{ references.length }}/{{ referenceLimit }}</span></button>
+			  <button v-if="references.length < referenceLimit" class="reference-slot__add" type="button" aria-label="继续添加参考素材" @click="openReferencePicker"><Plus :size="18" /><span>{{ references.length }}/{{ referenceLimit }}</span></button>
 			</div>
 		  </div>
           <div class="composer__input-wrap">
@@ -479,13 +582,13 @@ onBeforeUnmount(() => {
             <div class="composer__options">
               <div class="composer__selects">
                 <label class="compact-select"><select v-model="selectedModel" aria-label="模型" :disabled="modelsLoading || !currentCapability?.models.length"><option v-if="modelsLoading" value="">加载模型</option><option v-else-if="!currentCapability?.models.length" value="">暂无模型</option><option v-for="option in currentCapability?.models || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
-				<label v-if="activeType === 'video'" class="compact-select compact-select--mode"><select :value="videoMode" aria-label="视频生成模式" @change="changeVideoMode"><option v-for="mode in videoModes" :key="mode.value" :value="mode.value">{{ mode.label }}</option></select><ChevronDown :size="14" /></label>
+				<label v-if="activeType === 'video'" class="compact-select compact-select--mode"><select :value="videoMode" aria-label="视频生成模式" @change="changeVideoMode"><option v-for="mode in availableVideoModes" :key="mode.value" :value="mode.value">{{ mode.label }}</option></select><ChevronDown :size="14" /></label>
                 <label class="compact-select compact-select--small"><select v-model="selectedSize" aria-label="画面比例" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.sizes || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
 				<label class="compact-select compact-select--small"><select v-model="selectedQuality" aria-label="分辨率" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.qualities || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
 				<label v-if="activeType === 'image'" class="compact-select compact-select--count"><select v-model.number="selectedCount" aria-label="生成张数" :disabled="!currentCapability?.enabled"><option v-for="count in 4" :key="count" :value="count">{{ count }}张</option></select><ChevronDown :size="14" /></label>
 				<label v-else class="compact-select compact-select--count"><select v-model.number="selectedDuration" aria-label="视频时长" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.durations || []" :key="option.value" :value="Number(option.value)">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
-				<label v-if="activeType === 'video'" class="compact-toggle"><input v-model="soundEnabled" type="checkbox" /><span>{{ soundEnabled ? "有声音" : "无声音" }}</span></label>
-				<label v-if="activeType === 'video'" class="compact-toggle"><input v-model="watermarkEnabled" type="checkbox" /><span>{{ watermarkEnabled ? "有水印" : "无水印" }}</span></label>
+				<label v-if="activeType === 'video'" class="compact-toggle" :class="{'is-disabled':selectedVideoProfile?.supportsSound===false}"><input v-model="soundEnabled" type="checkbox" :disabled="selectedVideoProfile?.supportsSound===false" /><span>{{ soundEnabled ? "有声音" : "无声音" }}</span></label>
+				<label v-if="activeType === 'video'" class="compact-toggle" :class="{'is-disabled':selectedVideoProfile?.supportsWatermark===false}"><input v-model="watermarkEnabled" type="checkbox" :disabled="selectedVideoProfile?.supportsWatermark===false" /><span>{{ watermarkEnabled ? "有水印" : "无水印" }}</span></label>
               </div>
               <button class="create-button" type="button" :disabled="creating || modelsLoading || !selectedModel" @click="startCreation">
                 <LoaderCircle v-if="creating" class="spin" :size="18" />
@@ -514,7 +617,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="recentWorks.length" class="media-grid media-grid--recent">
             <button v-for="work in recentWorks" :key="work.id" type="button" class="media-tile" :disabled="work.status !== 'ready' || !recentPreviewUrls[work.id]" @click="openRecent(work)">
-              <img v-if="recentPreviewUrls[work.id] && work.type === 'image'" :src="recentPreviewUrls[work.id]" :alt="work.title" loading="lazy" decoding="async" />
+              <img v-if="recentPreviewUrls[work.id] && (work.type === 'image' || work.posterUrl)" :src="recentPreviewUrls[work.id]" :alt="work.title" loading="lazy" decoding="async" />
               <video v-else-if="recentPreviewUrls[work.id]" :src="recentPreviewUrls[work.id]" muted playsinline preload="metadata" aria-hidden="true" />
               <span v-else class="media-tile__state">{{ recentMeta(work) }}</span>
               <span class="media-tile__overlay" />
@@ -530,5 +633,21 @@ onBeforeUnmount(() => {
     </div>
 
     <AssetPreviewDialog v-if="selectedRecent && recentDetailUrl" :asset="selectedRecent" :media-url="recentDetailUrl" @close="closeRecent" @recreate="useSameParameters" />
+
+	<div v-if="referencePickerOpen" class="reference-picker" role="dialog" aria-modal="true" aria-label="选择参考素材" @click.self="closeReferencePicker">
+	  <div class="reference-picker__panel">
+		<header><div><strong>选择参考素材</strong><span>{{ referenceHint }}</span></div><button type="button" title="关闭" aria-label="关闭素材选择" @click="closeReferencePicker"><X :size="18" /></button></header>
+		<div class="reference-picker__toolbar"><button type="button" @click="chooseReference"><Paperclip :size="15" />上传新文件</button><span>已选 {{ references.length }}/{{ referenceLimit }}</span></div>
+		<div v-if="referencePickerLoading" class="reference-picker__state"><LoaderCircle class="spin" :size="22" />正在加载素材</div>
+		<div v-else-if="referencePickerAssets.length" class="reference-picker__grid">
+		  <button v-for="asset in referencePickerAssets" :key="asset.id" type="button" :title="asset.title" @click="selectExistingReference(asset)">
+			<img v-if="referencePickerUrls[asset.id]" :src="referencePickerUrls[asset.id]" :alt="asset.title" />
+			<span v-else><Music v-if="asset.type === 'audio'" :size="22" /><Video v-else-if="asset.type === 'video'" :size="22" /><Image v-else :size="22" /></span>
+			<small>{{ asset.title }}</small>
+		  </button>
+		</div>
+		<div v-else class="reference-picker__state"><FolderOpen :size="24" />暂无可用素材</div>
+	  </div>
+	</div>
   </div>
 </template>

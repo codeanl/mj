@@ -41,6 +41,33 @@ func (service *RecoveryService) CheckAdmin(ctx context.Context, taskID string) (
 	return service.check(ctx, task)
 }
 
+func (service *RecoveryService) CancelUpstream(ctx context.Context, userID, taskID string) error {
+	task, err := service.repository.Get(ctx, userID, taskID)
+	if err != nil {
+		return err
+	}
+	return service.cancelUpstream(ctx, task)
+}
+
+func (service *RecoveryService) CancelUpstreamAdmin(ctx context.Context, taskID string) error {
+	task, err := service.repository.GetByID(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	return service.cancelUpstream(ctx, task)
+}
+
+func (service *RecoveryService) cancelUpstream(ctx context.Context, task Task) error {
+	if task.Kind != "video" || task.UpstreamTaskID == "" {
+		return nil
+	}
+	selected, err := service.channels.ResolveModel(ctx, task.Kind, task.ChannelID, task.Model)
+	if err != nil {
+		return err
+	}
+	return service.videoProvider.Cancel(ctx, task, selected)
+}
+
 func (service *RecoveryService) check(ctx context.Context, task Task) (Task, error) {
 	if task.Status != TaskNeedsReview {
 		return Task{}, ErrNotReviewable

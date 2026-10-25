@@ -45,7 +45,7 @@ func TestCreateImagesChargesAndRefundsEachTask(t *testing.T) {
 	}
 
 	repository := NewRepository(pool)
-	batch, err := repository.CreateImages(ctx, userID, "批量参考图生成", ImageOptions{
+	batch, err := repository.CreateImages(ctx, userID, uuid.NewString(), "批量参考图生成", ImageOptions{
 		ChannelID: channelID, Model: "gpt-image-2", Ratio: "1:1", Resolution: "1K",
 		ProviderSize: "1024x1024", ProviderQuality: "high", Width: 1024, Height: 1024,
 	}, 4, referenceIDs, 1.5)
@@ -137,7 +137,9 @@ func TestCreateVideoCreatesOneTaskAndChargesOnce(t *testing.T) {
 
 	repository := NewRepository(pool)
 	videoReferences := []VideoReference{{AssetID: referenceIDs[0], Role: VideoRoleImage}, {AssetID: referenceIDs[1], Role: VideoRoleVideo}, {AssetID: referenceIDs[2], Role: VideoRoleAudio}}
-	task, remaining, err := repository.CreateVideo(ctx, userID, "海边日落运镜", VideoOptions{ChannelID: channelID, Model: "MiniMax-H3", Ratio: "16:9", Resolution: "1080P", DurationSeconds: 10, SoundEnabled: true, WatermarkEnabled: true, Mode: VideoModeReference}, videoReferences, 3.5)
+	requestID := uuid.NewString()
+	options := VideoOptions{ChannelID: channelID, Model: "MiniMax-H3", Ratio: "16:9", Resolution: "1080P", DurationSeconds: 10, SoundEnabled: true, WatermarkEnabled: true, Mode: VideoModeReference}
+	task, remaining, err := repository.CreateVideo(ctx, userID, requestID, "海边日落运镜", options, videoReferences, 3.5)
 	if err != nil {
 		t.Fatalf("create video: %v", err)
 	}
@@ -156,6 +158,10 @@ func TestCreateVideoCreatesOneTaskAndChargesOnce(t *testing.T) {
 	}
 	if taskCount != 1 || assetCount != 1 || consumeCount != 1 {
 		t.Fatalf("unexpected persisted counts: tasks=%d assets=%d consumes=%d", taskCount, assetCount, consumeCount)
+	}
+	duplicate, duplicateRemaining, err := repository.CreateVideo(ctx, userID, requestID, "海边日落运镜", options, videoReferences, 3.5)
+	if err != nil || duplicate.ID != task.ID || duplicate.AssetID != task.AssetID || duplicateRemaining != remaining {
+		t.Fatalf("idempotent create: task=%#v remaining=%v err=%v", duplicate, duplicateRemaining, err)
 	}
 	storedReferences, err := repository.GetReferences(ctx, task)
 	if err != nil || len(storedReferences) != 3 || storedReferences[0].Role != VideoRoleImage || storedReferences[1].Kind != "video" || storedReferences[1].Role != VideoRoleVideo || storedReferences[2].Kind != "audio" || storedReferences[2].Role != VideoRoleAudio {

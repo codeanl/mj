@@ -143,6 +143,7 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS retry_count integer NOT NU
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_task_id text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_query_path text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS review_reason text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS next_poll_at timestamptz;
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_status_check;
 ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_status_check CHECK (status IN ('queued', 'running', 'needs_review', 'succeeded', 'failed', 'cancelled'));
 ALTER TABLE media_assets DROP CONSTRAINT IF EXISTS media_assets_status_check;
@@ -173,6 +174,7 @@ CREATE TABLE IF NOT EXISTS channel_models (
     capability text NOT NULL DEFAULT 'image',
     enabled boolean NOT NULL DEFAULT true,
     sort_order integer NOT NULL DEFAULT 0,
+	capability_config jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT channel_models_capability_check CHECK (capability IN ('text', 'image', 'video', 'audio')),
@@ -189,12 +191,15 @@ ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS advanced_config jsonb NOT NU
 ALTER TABLE model_channels DROP CONSTRAINT IF EXISTS model_channels_protocol_check;
 ALTER TABLE model_channels ADD CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'compshare-minimax-h3', 'custom', 'compatible'));
 ALTER TABLE channel_models DROP CONSTRAINT IF EXISTS channel_models_capability_check;
+ALTER TABLE channel_models ADD COLUMN IF NOT EXISTS capability_config jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE channel_models ADD CONSTRAINT channel_models_capability_check CHECK (capability IN ('text', 'image', 'video', 'audio'));
 DROP INDEX IF EXISTS channel_models_model_id_unique_lower;
 CREATE UNIQUE INDEX IF NOT EXISTS channel_models_channel_model_unique_lower ON channel_models (channel_id, lower(model_id));
 
 CREATE INDEX IF NOT EXISTS generation_tasks_status_created_idx ON generation_tasks (status, created_at ASC);
 CREATE INDEX IF NOT EXISTS generation_tasks_user_created_idx ON generation_tasks (user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_request_slot_unique ON generation_tasks (user_id,(parameters->>'requestId'),((parameters->>'requestIndex')::integer)) WHERE parameters ? 'requestId';
+CREATE INDEX IF NOT EXISTS generation_tasks_poll_idx ON generation_tasks (next_poll_at) WHERE status = 'running' AND upstream_task_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS generation_attempts (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -232,6 +237,15 @@ ALTER TABLE model_channels ADD CONSTRAINT model_channels_protocol_check CHECK (p
 ALTER TABLE generation_attempts ADD COLUMN IF NOT EXISTS concurrency_at_start integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS generation_attempts_task_created_idx ON generation_attempts (task_id, attempt_no);
 UPDATE model_channels SET active_requests = 0 WHERE active_requests <> 0;
+
+UPDATE channel_models model SET capability_config='{"ratios":["adaptive","21:9","16:9","4:3","1:1","3:4","9:16"],"qualities":["480P","768P","1080P","2K","4K"],"minDuration":4,"maxDuration":30,"modes":["text","frames","reference"],"supportsSound":true,"supportsWatermark":true}'::jsonb
+FROM model_channels channel WHERE channel.id=model.channel_id AND channel.protocol='compshare-minimax-h3' AND model.capability='video' AND model.capability_config='{}'::jsonb;
+
+UPDATE generation_tasks
+SET status='running',next_poll_at=now(),review_reason=NULL,error_message=NULL
+WHERE kind='video' AND status='needs_review' AND upstream_task_id IS NOT NULL AND upstream_task_id<>'' AND channel_id IS NOT NULL;
+UPDATE media_assets asset SET status='generating',error_message=NULL
+FROM generation_tasks task WHERE task.asset_id=asset.id AND task.kind='video' AND task.status='running' AND task.upstream_task_id IS NOT NULL AND asset.status='needs_review';
 
 CREATE INDEX IF NOT EXISTS media_assets_user_created_idx ON media_assets (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS media_assets_user_kind_created_idx ON media_assets (user_id, kind, created_at DESC);

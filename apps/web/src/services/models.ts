@@ -4,6 +4,7 @@ export type PublicModel = {
   id: string
   displayName: string
 	capability: "image" | "video"
+	capabilityConfig?: { ratios?: string[]; qualities?: string[]; minDuration?: number; maxDuration?: number; modes?: string[]; supportsSound?: boolean; supportsWatermark?: boolean }
 }
 
 export async function listVideoModels() {

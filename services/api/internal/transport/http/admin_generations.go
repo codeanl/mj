@@ -132,7 +132,18 @@ func (handlers adminGenerationHandlers) Retry(w http.ResponseWriter, r *http.Req
 }
 
 func (handlers adminGenerationHandlers) Cancel(w http.ResponseWriter, r *http.Request) {
-	result, err := handlers.service.Cancel(r.Context(), r.PathValue("taskId"))
+	task, err := handlers.service.Get(r.Context(), r.PathValue("taskId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
+	if task.Status == "running" && task.UpstreamTaskID != "" {
+		if err := handlers.recovery.CancelUpstreamAdmin(r.Context(), task.ID); err != nil {
+			handlers.writeError(w, err)
+			return
+		}
+	}
+	result, err := handlers.service.Cancel(r.Context(), task.ID)
 	if err != nil {
 		handlers.writeError(w, err)
 		return

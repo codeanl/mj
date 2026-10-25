@@ -1,6 +1,7 @@
 package assets
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"mime"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -26,8 +28,10 @@ type UploadInput struct {
 }
 
 type Service struct {
-	repository Repository
-	storage    *LocalStorage
+	repository  Repository
+	storage     *LocalStorage
+	thumbnailMu sync.Mutex
+	posterMu    sync.Mutex
 }
 
 func NewService(repository Repository, storage *LocalStorage) *Service {
@@ -71,8 +75,8 @@ func (service *Service) store(ctx context.Context, input UploadInput, source Sou
 	return asset, nil
 }
 
-func (service *Service) List(ctx context.Context, userID string, kind Kind, source Source, search string, page, pageSize int) (Page, error) {
-	if userID == "" || page < 1 || (pageSize != 8 && pageSize != 12) {
+func (service *Service) List(ctx context.Context, userID string, kind Kind, source Source, status Status, search string, page, pageSize int) (Page, error) {
+	if userID == "" || page < 1 || (pageSize != 8 && pageSize != 12 && pageSize != 20) {
 		return Page{}, ErrInvalidAsset
 	}
 	if kind != "" && kind != KindImage && kind != KindVideo && kind != KindAudio {
@@ -81,7 +85,10 @@ func (service *Service) List(ctx context.Context, userID string, kind Kind, sour
 	if source != "" && source != SourceGenerated && source != SourceUploaded {
 		return Page{}, ErrInvalidAsset
 	}
-	return service.repository.List(ctx, userID, kind, source, strings.TrimSpace(search), page, pageSize)
+	if status != "" && status != StatusGenerating && status != StatusReady && status != StatusFailed && status != StatusNeedsReview {
+		return Page{}, ErrInvalidAsset
+	}
+	return service.repository.List(ctx, userID, kind, source, status, strings.TrimSpace(search), page, pageSize)
 }
 
 func (service *Service) Open(ctx context.Context, userID, id string) (Asset, io.ReadSeekCloser, error) {
@@ -100,6 +107,60 @@ func (service *Service) OpenByID(ctx context.Context, id string) (Asset, io.Read
 	}
 	file, err := service.storage.Open(asset.storageKey)
 	return asset, file, err
+}
+
+func (service *Service) OpenThumbnail(ctx context.Context, userID, id string) (Asset, io.ReadSeekCloser, error) {
+	asset, err := service.repository.Find(ctx, userID, id)
+	if err != nil {
+		return Asset{}, nil, err
+	}
+	if asset.Kind != KindImage {
+		return Asset{}, nil, ErrInvalidAsset
+	}
+	service.thumbnailMu.Lock()
+	defer service.thumbnailMu.Unlock()
+	thumbnailKey := asset.ID + ".thumb.jpg"
+	if thumbnail, openErr := service.storage.Open(thumbnailKey); openErr == nil {
+		return asset, thumbnail, nil
+	}
+	source, err := service.storage.Open(asset.storageKey)
+	if err != nil {
+		return Asset{}, nil, err
+	}
+	thumbnail, createErr := CreateImageThumbnail(source, 400)
+	closeErr := source.Close()
+	if createErr != nil {
+		return Asset{}, nil, createErr
+	}
+	if closeErr != nil {
+		return Asset{}, nil, closeErr
+	}
+	if err := service.storage.Save(thumbnailKey, bytes.NewReader(thumbnail)); err != nil {
+		return Asset{}, nil, err
+	}
+	content, err := service.storage.Open(thumbnailKey)
+	return asset, content, err
+}
+
+func (service *Service) OpenPoster(ctx context.Context, userID, id string) (Asset, io.ReadSeekCloser, error) {
+	asset, err := service.repository.Find(ctx, userID, id)
+	if err != nil {
+		return Asset{}, nil, err
+	}
+	if asset.Kind != KindVideo || asset.storageKey == "" {
+		return Asset{}, nil, ErrInvalidAsset
+	}
+	service.posterMu.Lock()
+	defer service.posterMu.Unlock()
+	posterKey := asset.ID + ".poster.jpg"
+	if poster, openErr := service.storage.Open(posterKey); openErr == nil {
+		return asset, poster, nil
+	}
+	if err := service.storage.CreateVideoPoster(ctx, asset.storageKey, posterKey); err != nil {
+		return Asset{}, nil, err
+	}
+	poster, err := service.storage.Open(posterKey)
+	return asset, poster, err
 }
 
 func ParseMediaType(mimeType string) (Kind, string, bool) {

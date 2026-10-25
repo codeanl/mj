@@ -61,6 +61,13 @@ func (service *Service) Cancel(ctx context.Context, taskID string) (ActionResult
 	return service.repository.Cancel(ctx, taskID)
 }
 
+func (service *Service) CancelForUser(ctx context.Context, userID, taskID string) (ActionResult, error) {
+	if _, err := uuid.Parse(taskID); err != nil || userID == "" {
+		return ActionResult{}, ErrInvalidInput
+	}
+	return service.repository.CancelForUser(ctx, userID, taskID)
+}
+
 func (service *Service) Refund(ctx context.Context, taskID string) (ActionResult, error) {
 	if _, err := uuid.Parse(taskID); err != nil {
 		return ActionResult{}, ErrInvalidInput

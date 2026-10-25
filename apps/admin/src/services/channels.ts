@@ -8,6 +8,7 @@ export type ChannelModel = {
   capability: ModelCapability
   enabled: boolean
   sortOrder: number
+  capabilityConfig: ModelCapabilityConfig
   createdAt: string
   updatedAt: string
 }
@@ -48,7 +49,10 @@ export type ModelInput = {
   capability: ModelCapability
   enabled: boolean
   sortOrder: number
+  capabilityConfig: ModelCapabilityConfig
 }
+
+export type ModelCapabilityConfig = { ratios:string[];qualities:string[];minDuration:number;maxDuration:number;modes:string[];supportsSound:boolean;supportsWatermark:boolean }
 
 export type ModelCapability = "text" | "image" | "video" | "audio"
 export type ChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "compshare-minimax-h3" | "custom" | "compatible"
@@ -79,6 +83,7 @@ export type AdvancedConfig = OperationConfig & {
   authHeader?: string
   authPrefix?: string
   documentationUrl?: string
+  pollIntervalSeconds?: number
   modelCatalogPaths: string[]
   operationConfigs?: Partial<Record<ModelCapability, OperationConfig>>
 }

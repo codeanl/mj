@@ -30,6 +30,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 	if err != nil {
 		panic(err)
 	}
+	assetStorage.ConfigureFFmpeg(cfg.FFmpegPath)
 	assetService := assets.NewService(assets.NewPostgresRepository(db), assetStorage)
 	assetHTTP := newAssetHandlers(assetService, logger, cfg.AssetMaxBytes)
 	adminGenerationService := admingenerations.NewService(admingenerations.NewRepository(db))
@@ -84,6 +85,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Get("/assets", assetHTTP.List)
 			protected.Post("/assets", assetHTTP.Upload)
 			protected.Get("/assets/{id}/content", assetHTTP.Content)
+			protected.Get("/assets/{id}/poster", assetHTTP.Poster)
 			protected.Get("/models", channelHTTP.PublicModels)
 			protected.Get("/points", pointHTTP.Wallet)
 			protected.Get("/generations/capabilities", generationHTTP.GetCapabilities)
@@ -91,6 +93,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Post("/generations/videos", generationHTTP.CreateVideo)
 			protected.Get("/generations/{id}", generationHTTP.GetTask)
 			protected.Post("/generations/{id}/retry", generationHTTP.Retry)
+			protected.Post("/generations/{id}/cancel", generationHTTP.Cancel)
 			protected.Post("/generations/{id}/check", generationHTTP.Check)
 
 			protected.Group(func(admin chi.Router) {

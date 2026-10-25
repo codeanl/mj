@@ -50,7 +50,7 @@ export async function getGenerationCapabilities() {
   return response.data.data
 }
 
-export async function createImageGeneration(input: { prompt: string; model: string; size: string; quality: string; count: number; referenceAssetIds?: string[] }) {
+export async function createImageGeneration(input: { requestId: string; prompt: string; model: string; size: string; quality: string; count: number; referenceAssetIds?: string[] }) {
 	const response = await http.post<ApiResponse<ImageGenerationBatch>>("/generations/images", input)
   return response.data.data
 }
@@ -58,7 +58,7 @@ export async function createImageGeneration(input: { prompt: string; model: stri
 export type VideoGenerationMode = "text" | "frames" | "reference"
 export type VideoReferenceRole = "first_frame" | "last_frame" | "reference_image" | "reference_video" | "reference_audio"
 
-export async function createVideoGeneration(input:{prompt:string;model:string;size:string;quality:string;durationSeconds:number;soundEnabled:boolean;watermarkEnabled:boolean;mode:VideoGenerationMode;references?:Array<{assetId:string;role:VideoReferenceRole}>}){
+export async function createVideoGeneration(input:{requestId:string;prompt:string;model:string;size:string;quality:string;durationSeconds:number;soundEnabled:boolean;watermarkEnabled:boolean;mode:VideoGenerationMode;references?:Array<{assetId:string;role:VideoReferenceRole}>}){
 	const response=await http.post<ApiResponse<ImageGenerationBatch>>("/generations/videos",input)
 	return response.data.data
 }
@@ -75,5 +75,10 @@ export async function retryGenerationTask(taskId: string) {
 
 export async function checkGenerationTask(taskId: string) {
 	const response = await http.post<ApiResponse<GenerationTask>>(`/generations/${encodeURIComponent(taskId)}/check`)
+	return response.data.data
+}
+
+export async function cancelGenerationTask(taskId: string) {
+	const response = await http.post<ApiResponse<{ taskId: string; status: string; pointsRemaining?: number }>>(`/generations/${encodeURIComponent(taskId)}/cancel`)
 	return response.data.data
 }

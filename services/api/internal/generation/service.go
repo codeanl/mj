@@ -19,6 +19,7 @@ var ErrInsufficientPoints = errors.New("insufficient points")
 var ErrInvalidImageCount = errors.New("invalid image count")
 var ErrInvalidReference = errors.New("invalid reference image")
 var ErrInvalidVideoReference = errors.New("invalid video reference")
+var ErrInvalidRequestID = errors.New("invalid generation request id")
 
 type Service struct {
 	repository *Repository
@@ -31,6 +32,9 @@ func NewService(repository *Repository, channels *modelchannels.Service, pointsS
 }
 
 func (service *Service) CreateImage(ctx context.Context, input CreateImageInput) (ImageBatch, error) {
+	if _, err := uuid.Parse(input.RequestID); err != nil {
+		return ImageBatch{}, ErrInvalidRequestID
+	}
 	prompt := strings.TrimSpace(input.Prompt)
 	if input.UserID == "" || utf8.RuneCountInString(prompt) < 2 || utf8.RuneCountInString(prompt) > 2000 {
 		return ImageBatch{}, ErrInvalidPrompt
@@ -59,10 +63,13 @@ func (service *Service) CreateImage(ctx context.Context, input CreateImageInput)
 	if err != nil {
 		return ImageBatch{}, err
 	}
-	return service.repository.CreateImages(ctx, input.UserID, prompt, options, count, referenceAssetIDs, cost)
+	return service.repository.CreateImages(ctx, input.UserID, input.RequestID, prompt, options, count, referenceAssetIDs, cost)
 }
 
 func (service *Service) CreateVideo(ctx context.Context, input CreateVideoInput) (VideoBatch, error) {
+	if _, err := uuid.Parse(input.RequestID); err != nil {
+		return VideoBatch{}, ErrInvalidRequestID
+	}
 	prompt := strings.TrimSpace(input.Prompt)
 	mode := strings.TrimSpace(input.Mode)
 	if mode == "" {
@@ -80,10 +87,12 @@ func (service *Service) CreateVideo(ctx context.Context, input CreateVideoInput)
 	if err != nil {
 		return VideoBatch{}, err
 	}
+	var selectedModel modelchannels.PublicModel
 	found := false
 	for _, model := range models {
 		if strings.EqualFold(model.ID, input.Model) {
 			found = true
+			selectedModel = model
 			break
 		}
 	}
@@ -102,9 +111,29 @@ func (service *Service) CreateVideo(ctx context.Context, input CreateVideoInput)
 	if seconds == 0 {
 		seconds = 5
 	}
-	validRatio := map[string]bool{"21:9": true, "16:9": true, "4:3": true, "1:1": true, "3:4": true, "9:16": true, "adaptive": true}
-	validQuality := map[string]bool{"480P": true, "768P": true, "1080P": true, "2K": true, "4K": true}
-	if !validRatio[ratio] || !validQuality[resolution] || seconds < 4 || seconds > 30 {
+	config := selectedModel.CapabilityConfig
+	if len(config.Ratios) == 0 {
+		config.Ratios = []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "adaptive"}
+	}
+	if len(config.Qualities) == 0 {
+		config.Qualities = []string{"480P", "768P", "1080P", "2K", "4K"}
+	}
+	if config.MinDuration <= 0 {
+		config.MinDuration = 4
+	}
+	if config.MaxDuration <= 0 {
+		config.MaxDuration = 30
+	}
+	if len(config.Modes) > 0 && !containsFold(config.Modes, mode) {
+		return VideoBatch{}, ErrUnsupportedOptions
+	}
+	if input.SoundEnabled && !config.SupportsSound {
+		return VideoBatch{}, ErrUnsupportedOptions
+	}
+	if input.WatermarkEnabled && !config.SupportsWatermark {
+		return VideoBatch{}, ErrUnsupportedOptions
+	}
+	if !containsFold(config.Ratios, ratio) || !containsFold(config.Qualities, resolution) || seconds < config.MinDuration || seconds > config.MaxDuration {
 		return VideoBatch{}, ErrUnsupportedOptions
 	}
 	candidates, err := service.channels.ResolveCandidates(ctx, "video", input.Model)
@@ -115,11 +144,20 @@ func (service *Service) CreateVideo(ctx context.Context, input CreateVideoInput)
 	if err != nil {
 		return VideoBatch{}, err
 	}
-	task, remaining, err := service.repository.CreateVideo(ctx, input.UserID, prompt, VideoOptions{ChannelID: candidates[0].ChannelID, Model: input.Model, Ratio: ratio, Resolution: resolution, DurationSeconds: seconds, SoundEnabled: input.SoundEnabled, WatermarkEnabled: input.WatermarkEnabled, Width: 0, Height: 0, Mode: mode}, references, cost)
+	task, remaining, err := service.repository.CreateVideo(ctx, input.UserID, input.RequestID, prompt, VideoOptions{ChannelID: candidates[0].ChannelID, Model: input.Model, Ratio: ratio, Resolution: resolution, DurationSeconds: seconds, SoundEnabled: input.SoundEnabled, WatermarkEnabled: input.WatermarkEnabled, Width: 0, Height: 0, Mode: mode}, references, cost)
 	if err != nil {
 		return VideoBatch{}, err
 	}
 	return VideoBatch{Tasks: []Task{task}, PointsRemaining: remaining}, nil
+}
+
+func containsFold(values []string, value string) bool {
+	for _, item := range values {
+		if strings.EqualFold(item, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeVideoReferences(mode string, values []VideoReference) ([]VideoReference, bool) {

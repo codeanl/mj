@@ -36,7 +36,7 @@ func TestAdminGenerationActionsAndPublicAccountSearch(t *testing.T) {
 		_, _ = pool.Exec(ctx, `DELETE FROM model_channels WHERE id = $1`, channelID)
 	}()
 	insertTask := func(taskID, assetID, status string, cost float64) {
-		if _, err := pool.Exec(ctx, `INSERT INTO media_assets (id, user_id, kind, source, status, title, size_bytes, width, height) VALUES ($1, $2, 'image', 'generated', $3, '测试任务', 0, 1024, 1024)`, assetID, userID, map[string]string{"queued": "generating", "succeeded": "ready"}[status]); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO media_assets (id, user_id, kind, source, status, title, size_bytes, width, height) VALUES ($1, $2, 'image', 'generated', $3, '测试任务', 0, 1024, 1024)`, assetID, userID, map[string]string{"queued": "generating", "running": "generating", "succeeded": "ready"}[status]); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := pool.Exec(ctx, `
@@ -66,6 +66,15 @@ func TestAdminGenerationActionsAndPublicAccountSearch(t *testing.T) {
 	if _, err := repository.Cancel(ctx, queuedTaskID); err != nil {
 		t.Fatalf("cancel retry: %v", err)
 	}
+	runningTaskID, runningAssetID := uuid.NewString(), uuid.NewString()
+	insertTask(runningTaskID, runningAssetID, "running", 1.5)
+	if _, err := pool.Exec(ctx, `UPDATE generation_tasks SET upstream_task_id='upstream-running',next_poll_at=now() WHERE id=$1`, runningTaskID); err != nil {
+		t.Fatal(err)
+	}
+	runningCancelled, err := repository.Cancel(ctx, runningTaskID)
+	if err != nil || runningCancelled.Task.Status != "cancelled" || runningCancelled.RefundedPointCost != 1.5 {
+		t.Fatalf("cancel running upstream task: %#v err=%v", runningCancelled, err)
+	}
 
 	succeededTaskID, succeededAssetID := uuid.NewString(), uuid.NewString()
 	if _, err := pool.Exec(ctx, `UPDATE users SET points_balance = 7 WHERE id = $1`, userID); err != nil {
@@ -81,7 +90,7 @@ func TestAdminGenerationActionsAndPublicAccountSearch(t *testing.T) {
 		t.Fatalf("unexpected balance: %v, %v", balance, err)
 	}
 	page, err := repository.List(ctx, ListInput{Page: 1, PageSize: 20, Search: "", AccountID: &accountID})
-	if err != nil || page.Total != 2 || len(page.Items) != 2 {
+	if err != nil || page.Total != 3 || len(page.Items) != 3 {
 		t.Fatalf("list by account ID: %#v, %v", page, err)
 	}
 }

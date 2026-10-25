@@ -23,3 +23,7 @@ export async function checkGenerationTask(taskId) {
     const response = await http.post(`/generations/${encodeURIComponent(taskId)}/check`);
     return response.data.data;
 }
+export async function cancelGenerationTask(taskId) {
+    const response = await http.post(`/generations/${encodeURIComponent(taskId)}/cancel`);
+    return response.data.data;
+}

@@ -26,6 +26,7 @@ type Asset struct {
 	Title            string              `json:"title"`
 	URL              string              `json:"url"`
 	DownloadURL      string              `json:"downloadUrl"`
+	PosterURL        string              `json:"posterUrl,omitempty"`
 	SizeBytes        int64               `json:"sizeBytes"`
 	Width            int                 `json:"width"`
 	Height           int                 `json:"height"`

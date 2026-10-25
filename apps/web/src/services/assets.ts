@@ -41,6 +41,7 @@ export type Asset = {
   mimeType?: string
   url: string
   downloadUrl: string
+  posterUrl?: string
   sizeBytes: number
   width: number
   height: number
@@ -58,7 +59,7 @@ export type AssetPage = {
   pageSize: number
 }
 
-export async function listAssets(params: { page: number; pageSize: number; type?: AssetType; source?: AssetSource; search?: string }) {
+export async function listAssets(params: { page: number; pageSize: number; type?: AssetType; source?: AssetSource; status?: AssetStatus; search?: string }) {
   const response = await http.get<ApiResponse<AssetPage>>("/assets", { params })
   return response.data.data
 }

@@ -9,7 +9,8 @@ import (
 )
 
 type LocalStorage struct {
-	root string
+	root       string
+	ffmpegPath string
 }
 
 func NewLocalStorage(root string) (*LocalStorage, error) {
