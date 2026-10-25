@@ -81,7 +81,7 @@ async function saveRules() {
   }
 }
 
-function updateMultiplier(group: "imageQualityMultipliers" | "videoQualityMultipliers" | "videoSecondsMultipliers", key: string, value: number | undefined) {
+function updateMultiplier(group: "imageQualityMultipliers" | "videoQualityMultipliers", key: string, value: number | undefined) {
   if (!config.value || value === undefined) return
   config.value.settings[group][key] = value
 }
@@ -108,27 +108,26 @@ function messageOf(error: unknown, fallback: string) {
         <div class="points-section-heading"><div><strong>基础积分</strong><span>新用户注册时获得初始积分；未单独配置的模型使用默认成本。</span></div></div>
         <div class="points-base-grid">
           <label><span>新用户初始积分</span><ElInputNumber v-model="config.settings.initialPoints" :min="0" :max="1000000" :precision="2" /></label>
-          <label><span>其他模型默认成本</span><ElInputNumber v-model="config.settings.defaultModelCost" :min="0" :max="1000000" :precision="2" /></label>
+          <label><span>默认成本（视频按每秒）</span><ElInputNumber v-model="config.settings.defaultModelCost" :min="0" :max="1000000" :precision="2" /></label>
         </div>
       </section>
 
       <section class="points-section">
-        <div class="points-section-heading"><div><strong>模型基础扣费</strong><span>每次调用先应用模型成本，再乘以生成参数倍率。</span></div><div class="points-custom-model"><ElInput v-model="customModel" placeholder="手工模型 ID" @keyup.enter="addCustomModel" /><ElButton @click="addCustomModel"><Plus :size="14" />添加</ElButton></div></div>
+        <div class="points-section-heading"><div><strong>模型基础扣费</strong><span>图片模型按次配置，视频模型按每秒积分配置。</span></div><div class="points-custom-model"><ElInput v-model="customModel" placeholder="手工模型 ID" @keyup.enter="addCustomModel" /><ElButton @click="addCustomModel"><Plus :size="14" />添加</ElButton></div></div>
         <div class="points-capability-tabs">
           <button v-for="capability in capabilities" :key="capability.value" type="button" :class="{ 'is-active': activeCapability === capability.value }" @click="activeCapability = capability.value">{{ capability.label }} {{ groupedCounts[capability.value] }}</button>
         </div>
         <div v-if="visibleModels.length" class="points-model-grid">
-          <div v-for="model in visibleModels" :key="model.modelId"><span><strong>{{ model.displayName }}</strong><small>{{ model.modelId }}</small></span><ElInputNumber :model-value="modelCost(model.modelId)" :min="0" :max="1000000" :precision="2" @update:model-value="setModelCost(model.modelId, $event)" /><button type="button" title="恢复默认成本" :disabled="!config.rules.some((rule) => rule.modelId.toLowerCase() === model.modelId.toLowerCase())" @click="resetModelCost(model.modelId)"><RotateCcw :size="14" /></button></div>
+          <div v-for="model in visibleModels" :key="model.modelId"><span><strong>{{ model.displayName }}</strong><small>{{ model.modelId }} · {{ model.capability === "video" ? "每秒积分" : "每次积分" }}</small></span><ElInputNumber :model-value="modelCost(model.modelId)" :min="0" :max="1000000" :precision="2" @update:model-value="setModelCost(model.modelId, $event)" /><button type="button" title="恢复默认成本" :disabled="!config.rules.some((rule) => rule.modelId.toLowerCase() === model.modelId.toLowerCase())" @click="resetModelCost(model.modelId)"><RotateCcw :size="14" /></button></div>
         </div>
         <div v-else class="points-empty">当前没有{{ capabilities.find((item) => item.value === activeCapability)?.label }}模型，请先在模型渠道中配置。</div>
       </section>
 
       <section class="points-section">
-        <div class="points-section-heading"><div><strong>生成参数倍率</strong><span>最终扣费 = 模型成本 × 参数倍率；未命中的参数按 1 倍处理。</span></div></div>
+        <div class="points-section-heading"><div><strong>生成参数倍率</strong><span>视频扣费 = 每秒积分 × 实际秒数 × 清晰度倍率；图片按模型成本乘清晰度倍率。</span></div></div>
         <div class="points-multiplier-grid">
           <MultiplierPanel title="图片清晰度" :values="config.settings.imageQualityMultipliers" :labels="{ '1K': '1K', '2K': '2K' }" @change="(key, value) => updateMultiplier('imageQualityMultipliers', key, value)" />
-          <MultiplierPanel title="视频清晰度" :values="config.settings.videoQualityMultipliers" :labels="{ '480': '480p', '720': '720p', '1080': '1080p' }" @change="(key, value) => updateMultiplier('videoQualityMultipliers', key, value)" />
-          <MultiplierPanel title="视频秒数" :values="config.settings.videoSecondsMultipliers" :labels="{ '5': '5 秒', '10': '10 秒' }" @change="(key, value) => updateMultiplier('videoSecondsMultipliers', key, value)" />
+          <MultiplierPanel title="视频清晰度" :values="config.settings.videoQualityMultipliers" :labels="{ '480P': '480P', '768P': '768P', '1080P': '1080P', '2K': '2K', '4K': '4K' }" @change="(key, value) => updateMultiplier('videoQualityMultipliers', key, value)" />
         </div>
       </section>
     </template>

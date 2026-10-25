@@ -27,6 +27,8 @@ export type ModelChannel = {
   createdAt: string
   updatedAt: string
   models: ChannelModel[]
+	priority: number; weight: number; maxConcurrency: number; timeoutSeconds: number; failureThreshold: number; cooldownSeconds: number
+	activeRequests: number; consecutiveFailures: number; cooldownUntil?: string; lastRuntimeError: string; lastRuntimeAt?: string; lastLatencyMs?: number
 }
 
 export type ChannelInput = {
@@ -37,6 +39,7 @@ export type ChannelInput = {
   clearApiKey?: boolean
   enabled: boolean
   advancedConfig: AdvancedConfig
+	priority: number; weight: number; maxConcurrency: number; timeoutSeconds: number; failureThreshold: number; cooldownSeconds: number
 }
 
 export type ModelInput = {
@@ -48,8 +51,10 @@ export type ModelInput = {
 }
 
 export type ModelCapability = "text" | "image" | "video" | "audio"
-export type ChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible"
+export type ChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "compshare-minimax-h3" | "custom" | "compatible"
 export type AuthMode = "none" | "bearer" | "x-api-key" | "custom-header"
+export type RouteSimulation = { model:string; size:string; quality:string; selectedChannelId?:string; candidates:Array<{channelId:string;channelName:string;protocol:string;priority:number;weight:number;activeRequests:number;maxConcurrency:number;cooling:boolean;available:boolean;reason:string;selected:boolean;failoverTo?:string}> }
+export type RuntimeStats = { window:string;requests:number;successRate:number;averageLatencyMs:number;autoSwitches:number;peakConcurrency:number;httpErrors:Record<string,number>;routes:Array<{model:string;channelId:string;channelName:string;requests:number;succeeded:number;averageLatencyMs:number;trafficShare:number}> }
 
 export type OperationConfig = {
   createPath?: string
@@ -114,6 +119,9 @@ export function createChannel(input: ChannelInput) {
 export function updateChannel(id: string, input: ChannelInput) {
   return request<{ channel: ModelChannel }>(`/admin/channels/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }).then((result) => result.channel)
 }
+
+export function simulateRoute(input:{model:string;size:string;quality:string}){const query=new URLSearchParams(input);return request<RouteSimulation>(`/admin/channels/simulate?${query}`)}
+export function getChannelStats(window:"24h"|"7d"){return request<RuntimeStats>(`/admin/channels/stats?window=${window}`)}
 
 export function deleteChannel(id: string) {
   return request<{ deleted: boolean }>(`/admin/channels/${encodeURIComponent(id)}`, { method: "DELETE" })

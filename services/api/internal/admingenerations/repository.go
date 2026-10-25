@@ -36,7 +36,7 @@ const taskColumns = `
 	jsonb_array_length(coalesce(t.parameters->'referenceAssetIds', '[]'::jsonb)),
 	t.points_cost, t.points_refunded, t.retry_count, coalesce(t.error_message, ''),
 	u.public_id, u.username, u.email, coalesce(t.channel_id::text, ''), coalesce(c.name, ''), coalesce(c.protocol, ''),
-	t.created_at, t.started_at, t.completed_at`
+	t.created_at, t.started_at, t.completed_at,coalesce(t.upstream_task_id,''),coalesce(t.review_reason,'')`
 
 func NewRepository(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
@@ -85,10 +85,10 @@ func (repository *Repository) summary(ctx context.Context) (Summary, error) {
 		SELECT count(*),
 		       count(*) FILTER (WHERE status = 'queued'), count(*) FILTER (WHERE status = 'running'),
 		       count(*) FILTER (WHERE status = 'succeeded'), count(*) FILTER (WHERE status = 'failed'),
-		       count(*) FILTER (WHERE status = 'cancelled'),
+		       count(*) FILTER (WHERE status = 'cancelled'),count(*) FILTER (WHERE status = 'needs_review'),
 		       coalesce(sum(points_cost) FILTER (WHERE NOT points_refunded), 0)
 		FROM generation_tasks
-	`).Scan(&summary.Total, &summary.Queued, &summary.Running, &summary.Succeeded, &summary.Failed, &summary.Cancelled, &summary.PointsSpent)
+	`).Scan(&summary.Total, &summary.Queued, &summary.Running, &summary.Succeeded, &summary.Failed, &summary.Cancelled, &summary.NeedsReview, &summary.PointsSpent)
 	return summary, err
 }
 
@@ -107,7 +107,29 @@ func (repository *Repository) Get(ctx context.Context, taskID string) (Task, err
 		}
 		return Task{}, err
 	}
+	attempts, err := repository.attempts(ctx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	task.Attempts = attempts
 	return task, nil
+}
+
+func (repository *Repository) attempts(ctx context.Context, taskID string) ([]Attempt, error) {
+	rows, err := repository.pool.Query(ctx, `SELECT a.attempt_no, coalesce(a.channel_id::text,''), coalesce(c.name,''), a.protocol, a.request_path, a.status, a.http_status, a.duration_ms, a.error_message, a.created_at, a.completed_at FROM generation_attempts a LEFT JOIN model_channels c ON c.id=a.channel_id WHERE a.task_id=$1 ORDER BY a.attempt_no`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Attempt{}
+	for rows.Next() {
+		var item Attempt
+		if err := rows.Scan(&item.AttemptNo, &item.ChannelID, &item.ChannelName, &item.Protocol, &item.RequestPath, &item.Status, &item.HTTPStatus, &item.DurationMS, &item.ErrorMessage, &item.CreatedAt, &item.CompletedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func scanTask(row rowScanner, task *Task, extra ...interface{}) error {
@@ -117,6 +139,7 @@ func scanTask(row rowScanner, task *Task, extra ...interface{}) error {
 		&task.PointsCost, &task.PointsRefunded, &task.RetryCount, &task.ErrorMessage,
 		&task.AccountID, &task.Username, &task.Email, &task.ChannelID, &task.ChannelName, &task.ChannelProtocol,
 		&task.CreatedAt, &task.StartedAt, &task.CompletedAt,
+		&task.UpstreamTaskID, &task.ReviewReason,
 	}
 	values = append(values, extra...)
 	return row.Scan(values...)
@@ -220,6 +243,17 @@ func (repository *Repository) Retry(ctx context.Context, taskID string) (ActionR
 	}
 	updated, err := repository.Get(ctx, taskID)
 	return ActionResult{Task: updated, PointsRemaining: &balance}, err
+}
+
+func (repository *Repository) RetryForUser(ctx context.Context, userID, taskID string) (ActionResult, error) {
+	var exists bool
+	if err := repository.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM generation_tasks WHERE id=$1 AND user_id=$2)`, taskID, userID).Scan(&exists); err != nil {
+		return ActionResult{}, err
+	}
+	if !exists {
+		return ActionResult{}, ErrNotFound
+	}
+	return repository.Retry(ctx, taskID)
 }
 
 func (repository *Repository) lock(ctx context.Context, taskID string) (pgx.Tx, lockedTask, error) {

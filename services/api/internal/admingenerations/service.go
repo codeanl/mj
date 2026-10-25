@@ -47,6 +47,13 @@ func (service *Service) Retry(ctx context.Context, taskID string) (ActionResult,
 	return service.repository.Retry(ctx, taskID)
 }
 
+func (service *Service) RetryForUser(ctx context.Context, userID, taskID string) (ActionResult, error) {
+	if _, err := uuid.Parse(taskID); err != nil || userID == "" {
+		return ActionResult{}, ErrInvalidInput
+	}
+	return service.repository.RetryForUser(ctx, userID, taskID)
+}
+
 func (service *Service) Cancel(ctx context.Context, taskID string) (ActionResult, error) {
 	if _, err := uuid.Parse(taskID); err != nil {
 		return ActionResult{}, ErrInvalidInput
@@ -71,7 +78,7 @@ func parseAccountID(value string) (int64, bool) {
 }
 
 func validStatusFilter(value string) bool {
-	return value == "" || value == "queued" || value == "running" || value == "succeeded" || value == "failed" || value == "cancelled"
+	return value == "" || value == "queued" || value == "running" || value == "needs_review" || value == "succeeded" || value == "failed" || value == "cancelled"
 }
 
 func validKindFilter(value string) bool {

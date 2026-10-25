@@ -5,10 +5,11 @@ import "time"
 type TaskStatus string
 
 const (
-	TaskQueued    TaskStatus = "queued"
-	TaskRunning   TaskStatus = "running"
-	TaskSucceeded TaskStatus = "succeeded"
-	TaskFailed    TaskStatus = "failed"
+	TaskQueued      TaskStatus = "queued"
+	TaskRunning     TaskStatus = "running"
+	TaskNeedsReview TaskStatus = "needs_review"
+	TaskSucceeded   TaskStatus = "succeeded"
+	TaskFailed      TaskStatus = "failed"
 )
 
 const (
@@ -17,6 +18,14 @@ const (
 	ProviderImageQuality   = "high"
 	MaxImageCount          = 4
 	MaxReferenceImages     = 3
+	VideoModeText          = "text"
+	VideoModeFrames        = "frames"
+	VideoModeReference     = "reference"
+	VideoRoleFirstFrame    = "first_frame"
+	VideoRoleLastFrame     = "last_frame"
+	VideoRoleImage         = "reference_image"
+	VideoRoleVideo         = "reference_video"
+	VideoRoleAudio         = "reference_audio"
 )
 
 type Task struct {
@@ -31,16 +40,23 @@ type Task struct {
 	Width               int        `json:"width"`
 	Height              int        `json:"height"`
 	Quality             string     `json:"quality"`
+	DurationSeconds     int        `json:"durationSeconds,omitempty"`
+	SoundEnabled        bool       `json:"soundEnabled"`
+	WatermarkEnabled    bool       `json:"watermarkEnabled"`
 	ErrorMessage        string     `json:"errorMessage,omitempty"`
 	PointsCost          float64    `json:"pointsCost"`
 	PointsRemaining     float64    `json:"pointsRemaining"`
 	ReferenceAssetIDs   []string   `json:"referenceAssetIds,omitempty"`
+	UpstreamTaskID      string     `json:"upstreamTaskId,omitempty"`
+	UpstreamQueryPath   string     `json:"upstreamQueryPath,omitempty"`
+	ReviewReason        string     `json:"reviewReason,omitempty"`
 	CreatedAt           time.Time  `json:"createdAt"`
 	userID              string
 	pointsTransactionID string
 	pointsRefunded      bool
 	providerSize        string
 	providerQuality     string
+	retryCount          int
 }
 
 type ImageOptions struct {
@@ -64,6 +80,41 @@ type CreateImageInput struct {
 	ReferenceAssetIDs []string
 }
 
+type CreateVideoInput struct {
+	UserID           string
+	Prompt           string
+	Model            string
+	Size             string
+	Quality          string
+	DurationSeconds  int
+	SoundEnabled     bool
+	WatermarkEnabled bool
+	Mode             string
+	References       []VideoReference
+}
+
+type VideoReference struct {
+	AssetID string `json:"assetId"`
+	Role    string `json:"role"`
+}
+
+type VideoOptions struct {
+	ChannelID        string
+	Model            string
+	Ratio            string
+	Resolution       string
+	DurationSeconds  int
+	SoundEnabled     bool
+	WatermarkEnabled bool
+	Width            int
+	Height           int
+	Mode             string
+}
+type VideoBatch struct {
+	Tasks           []Task  `json:"tasks"`
+	PointsRemaining float64 `json:"pointsRemaining"`
+}
+
 type ImageBatch struct {
 	Tasks           []Task  `json:"tasks"`
 	PointsRemaining float64 `json:"pointsRemaining"`
@@ -73,12 +124,16 @@ type ReferenceImage struct {
 	Content  []byte
 	MimeType string
 	Name     string
+	Kind     string
+	Role     string
 }
 
 type storedReference struct {
 	StorageKey   string
 	OriginalName string
 	MimeType     string
+	Kind         string
+	Role         string
 }
 
 type Option struct {
@@ -98,6 +153,7 @@ type GenerationCapability struct {
 	Models    []Option          `json:"models"`
 	Sizes     []ImageSizeOption `json:"sizes"`
 	Qualities []Option          `json:"qualities"`
+	Durations []Option          `json:"durations,omitempty"`
 }
 
 type Capabilities struct {
@@ -106,10 +162,11 @@ type Capabilities struct {
 }
 
 type CompletedAsset struct {
-	StorageKey   string
-	OriginalName string
-	MimeType     string
-	SizeBytes    int64
-	Width        int
-	Height       int
+	StorageKey      string
+	OriginalName    string
+	MimeType        string
+	SizeBytes       int64
+	Width           int
+	Height          int
+	DurationSeconds *float64
 }

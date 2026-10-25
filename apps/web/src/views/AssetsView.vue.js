@@ -1,29 +1,38 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { useDebounceFn, useIntervalFn } from "@vueuse/core";
-import { ChevronLeft, ChevronRight, CircleAlert, Download, Image, Images, LoaderCircle, Play, Plus, Search, Upload, Video, X, } from "@lucide/vue";
+import { ChevronLeft, ChevronRight, CircleAlert, Download, Image, Images, LoaderCircle, Music, Play, Plus, RotateCcw, RefreshCcw, Search, Upload, Video, } from "@lucide/vue";
 import * as assetApi from "@/services/assets";
+import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue";
 import { apiErrorMessage } from "@/services/http";
 import { notification } from "@/services/notifications";
+import { checkGenerationTask, retryGenerationTask } from "@/services/generation";
 import { useAuthStore } from "@/stores/auth";
 const filters = [
     { value: "all", label: "全部", icon: Images },
     { value: "image", label: "图片", icon: Image },
     { value: "video", label: "视频", icon: Video },
+    { value: "audio", label: "音频", icon: Music },
 ];
 const assets = ref([]);
 const total = ref(0);
 const activeFilter = ref("all");
 const searchKeyword = ref("");
 const currentPage = ref(1);
-const pageSize = ref(8);
+const pageSize = ref(12);
 const loading = ref(false);
 const refreshing = ref(false);
 const uploading = ref(false);
+const retryingId = ref("");
 const fileInput = ref(null);
 const previewUrls = ref({});
 const previewSignatures = ref({});
 const selectedAsset = ref(null);
+const selectedAssetUrl = ref("");
+let selectedAssetObjectUrl = "";
 const authStore = useAuthStore();
+const router = useRouter();
+const sameParametersStorageKey = "nova.same-generation-parameters";
 let loadSequence = 0;
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 const hasGeneratingAssets = computed(() => assets.value.some((asset) => asset.status === "generating"));
@@ -43,6 +52,7 @@ watch(searchKeyword, () => searchAssets());
 watch(hasGeneratingAssets, (hasGenerating) => (hasGenerating ? resumeRefresh() : pauseRefresh()), { immediate: true });
 onBeforeUnmount(() => {
     pauseRefresh();
+    closeAsset();
     revokePreviewUrls();
 });
 async function loadAssets(options = {}) {
@@ -69,7 +79,7 @@ async function loadAssets(options = {}) {
             currentPage.value = totalPages.value;
             return;
         }
-        await loadPreviewUrls(result.items, sequence);
+        void loadPreviewUrls(result.items, sequence);
     }
     catch (error) {
         if (sequence === loadSequence)
@@ -93,7 +103,16 @@ async function loadPreviewUrls(items, sequence) {
             if (existingUrls[asset.id] && existingSignatures[asset.id] === signature) {
                 return { id: asset.id, url: existingUrls[asset.id], signature, created: false };
             }
-            const blob = await assetApi.getAssetContent(asset.url);
+            const previewURL = asset.type === "image" ? `${asset.url}${asset.url.includes("?") ? "&" : "?"}thumbnail=1` : asset.url;
+            let blob;
+            try {
+                blob = await assetApi.getAssetContent(previewURL);
+            }
+            catch {
+                if (asset.type !== "image")
+                    throw new Error("preview unavailable");
+                blob = await assetApi.getAssetContent(asset.url);
+            }
             return { id: asset.id, url: URL.createObjectURL(blob), signature, created: true };
         }
         catch {
@@ -152,14 +171,81 @@ async function handleFileSelection(event) {
         input.value = "";
     }
 }
-function openAsset(asset) {
+async function openAsset(asset) {
     if (asset.status !== "ready")
         return;
     if (!previewUrls.value[asset.id]) {
         notification.warning("素材预览暂不可用");
         return;
     }
+    closeAsset();
     selectedAsset.value = asset;
+    selectedAssetUrl.value = previewUrls.value[asset.id];
+    if (asset.type !== "image")
+        return;
+    try {
+        const original = await assetApi.getAssetContent(asset.url);
+        const objectUrl = URL.createObjectURL(original);
+        if (selectedAsset.value?.id !== asset.id) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+        }
+        selectedAssetObjectUrl = objectUrl;
+        selectedAssetUrl.value = objectUrl;
+    }
+    catch {
+        // Keep the thumbnail visible when the original is temporarily unavailable.
+    }
+}
+function closeAsset() {
+    if (selectedAssetObjectUrl)
+        URL.revokeObjectURL(selectedAssetObjectUrl);
+    selectedAssetObjectUrl = "";
+    selectedAssetUrl.value = "";
+    selectedAsset.value = null;
+}
+function useSameParameters(asset) {
+    if (!asset.generation || (asset.type !== "image" && asset.type !== "video"))
+        return;
+    sessionStorage.setItem(sameParametersStorageKey, JSON.stringify(asset));
+    closeAsset();
+    void router.push("/");
+}
+async function retryAsset(asset) {
+    if (!asset.generationTaskId || retryingId.value)
+        return;
+    retryingId.value = asset.id;
+    try {
+        const result = await retryGenerationTask(asset.generationTaskId);
+        if (result.pointsRemaining !== undefined)
+            authStore.setPointsBalance(result.pointsRemaining);
+        await loadAssets({ silent: true });
+        notification.success("失败任务已重新排队");
+    }
+    catch (error) {
+        notification.error(apiErrorMessage(error, "任务重试失败"));
+    }
+    finally {
+        retryingId.value = "";
+    }
+}
+async function checkAsset(asset) {
+    if (!asset.generationTaskId || retryingId.value)
+        return;
+    retryingId.value = asset.id;
+    try {
+        const task = await checkGenerationTask(asset.generationTaskId);
+        if (task.pointsRemaining !== undefined)
+            authStore.setPointsBalance(task.pointsRemaining);
+        await loadAssets({ silent: true });
+        notification.info(task.status === "succeeded" ? "任务已完成" : "上游仍在处理中，请稍后再次检查");
+    }
+    catch (error) {
+        notification.error(apiErrorMessage(error, "状态检查失败"));
+    }
+    finally {
+        retryingId.value = "";
+    }
 }
 async function downloadAsset(asset) {
     try {
@@ -207,6 +293,8 @@ function statusLabel(status) {
         return "生成中";
     if (status === "failed")
         return "生成失败";
+    if (status === "needs_review")
+        return "等待确认";
     return "已完成";
 }
 const __VLS_ctx = {};
@@ -225,9 +313,13 @@ __VLS_withDotValue(assets, {});
 // @ts-ignore
 __VLS_withDotValue(previewUrls, {});
 // @ts-ignore
+__VLS_withDotValue(retryingId, {});
+// @ts-ignore
 __VLS_withDotValue(currentPage, {});
 // @ts-ignore
 __VLS_withDotValue(selectedAsset, {});
+// @ts-ignore
+__VLS_withDotValue(selectedAssetUrl, {});
 __VLS_asFunctionalElement1(__VLS_intrinsics.section, __VLS_intrinsics.section)({
     ...{ class: "assets-page" },
 });
@@ -282,7 +374,7 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.input)({
     ref: "fileInput",
     ...{ class: "asset-file-input" },
     type: "file",
-    accept: "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime",
+    accept: "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/flac",
 });
 /** @type {__VLS_StyleScopedClasses['asset-file-input']} */ ;
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
@@ -402,33 +494,73 @@ else if (assets.value.length) {
                 alt: (asset.title),
             });
         }
-        else if (asset.status === 'ready' && previewUrls.value[asset.id]) {
+        else if (asset.status === 'ready' && previewUrls.value[asset.id] && asset.type === 'video') {
             __VLS_asFunctionalElement1(__VLS_intrinsics.video)({
                 src: (previewUrls.value[asset.id]),
                 muted: true,
                 preload: "metadata",
             });
         }
+        else if (asset.status === 'ready' && previewUrls.value[asset.id]) {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
+                ...{ class: "asset-card__audio" },
+            });
+            /** @type {__VLS_StyleScopedClasses['asset-card__audio']} */ ;
+            let __VLS_23;
+            /** @ts-ignore @type { | typeof __VLS_components.Music} */
+            Music;
+            // @ts-ignore
+            const __VLS_24 = __VLS_asFunctionalComponent1(__VLS_23, new __VLS_23({
+                // @ts-ignore
+                size: (30),
+            }));
+            const __VLS_25 = __VLS_24({
+                size: (30),
+            }, ...__VLS_functionalComponentArgsRest(__VLS_24));
+            __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
+            (asset.title);
+        }
         else if (asset.status === 'generating') {
             __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
                 ...{ class: "asset-card__generation-state" },
             });
             /** @type {__VLS_StyleScopedClasses['asset-card__generation-state']} */ ;
-            let __VLS_23;
+            let __VLS_28;
             /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
             LoaderCircle;
             // @ts-ignore
-            const __VLS_24 = __VLS_asFunctionalComponent1(__VLS_23, new __VLS_23({
+            const __VLS_29 = __VLS_asFunctionalComponent1(__VLS_28, new __VLS_28({
                 // @ts-ignore
                 ...{ class: "spin" }, size: (25),
             }));
-            const __VLS_25 = __VLS_24({
+            const __VLS_30 = __VLS_29({
                 ...{ class: "spin" },
                 size: (25),
-            }, ...__VLS_functionalComponentArgsRest(__VLS_24));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_29));
             /** @type {__VLS_StyleScopedClasses['spin']} */ ;
             __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
             __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
+        }
+        else if (asset.status === 'needs_review') {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
+                ...{ class: "asset-card__generation-state asset-card__generation-state--failed" },
+            });
+            /** @type {__VLS_StyleScopedClasses['asset-card__generation-state']} */ ;
+            /** @type {__VLS_StyleScopedClasses['asset-card__generation-state--failed']} */ ;
+            let __VLS_33;
+            /** @ts-ignore @type { | typeof __VLS_components.CircleAlert} */
+            CircleAlert;
+            // @ts-ignore
+            const __VLS_34 = __VLS_asFunctionalComponent1(__VLS_33, new __VLS_33({
+                // @ts-ignore
+                size: (25),
+            }));
+            const __VLS_35 = __VLS_34({
+                size: (25),
+            }, ...__VLS_functionalComponentArgsRest(__VLS_34));
+            __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
+            __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
+            (asset.errorMessage || "请检查上游状态");
         }
         else if (asset.status === 'failed') {
             __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
@@ -437,17 +569,17 @@ else if (assets.value.length) {
             });
             /** @type {__VLS_StyleScopedClasses['asset-card__generation-state']} */ ;
             /** @type {__VLS_StyleScopedClasses['asset-card__generation-state--failed']} */ ;
-            let __VLS_28;
+            let __VLS_38;
             /** @ts-ignore @type { | typeof __VLS_components.CircleAlert} */
             CircleAlert;
             // @ts-ignore
-            const __VLS_29 = __VLS_asFunctionalComponent1(__VLS_28, new __VLS_28({
+            const __VLS_39 = __VLS_asFunctionalComponent1(__VLS_38, new __VLS_38({
                 // @ts-ignore
                 size: (25),
             }));
-            const __VLS_30 = __VLS_29({
+            const __VLS_40 = __VLS_39({
                 size: (25),
-            }, ...__VLS_functionalComponentArgsRest(__VLS_29));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_39));
             __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
             __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
             (asset.errorMessage || "请稍后重试");
@@ -458,30 +590,43 @@ else if (assets.value.length) {
             });
             /** @type {__VLS_StyleScopedClasses['asset-card__media-loading']} */ ;
             if (asset.type === 'image') {
-                let __VLS_33;
+                let __VLS_43;
                 /** @ts-ignore @type { | typeof __VLS_components.Image} */
                 Image;
                 // @ts-ignore
-                const __VLS_34 = __VLS_asFunctionalComponent1(__VLS_33, new __VLS_33({
+                const __VLS_44 = __VLS_asFunctionalComponent1(__VLS_43, new __VLS_43({
                     // @ts-ignore
                     size: (24),
                 }));
-                const __VLS_35 = __VLS_34({
+                const __VLS_45 = __VLS_44({
                     size: (24),
-                }, ...__VLS_functionalComponentArgsRest(__VLS_34));
+                }, ...__VLS_functionalComponentArgsRest(__VLS_44));
             }
-            else {
-                let __VLS_38;
+            else if (asset.type === 'video') {
+                let __VLS_48;
                 /** @ts-ignore @type { | typeof __VLS_components.Video} */
                 Video;
                 // @ts-ignore
-                const __VLS_39 = __VLS_asFunctionalComponent1(__VLS_38, new __VLS_38({
+                const __VLS_49 = __VLS_asFunctionalComponent1(__VLS_48, new __VLS_48({
                     // @ts-ignore
                     size: (24),
                 }));
-                const __VLS_40 = __VLS_39({
+                const __VLS_50 = __VLS_49({
                     size: (24),
-                }, ...__VLS_functionalComponentArgsRest(__VLS_39));
+                }, ...__VLS_functionalComponentArgsRest(__VLS_49));
+            }
+            else {
+                let __VLS_53;
+                /** @ts-ignore @type { | typeof __VLS_components.Music} */
+                Music;
+                // @ts-ignore
+                const __VLS_54 = __VLS_asFunctionalComponent1(__VLS_53, new __VLS_53({
+                    // @ts-ignore
+                    size: (24),
+                }));
+                const __VLS_55 = __VLS_54({
+                    size: (24),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_54));
             }
         }
         __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
@@ -489,49 +634,62 @@ else if (assets.value.length) {
         });
         /** @type {__VLS_StyleScopedClasses['asset-card__type']} */ ;
         if (asset.type === 'image') {
-            let __VLS_43;
+            let __VLS_58;
             /** @ts-ignore @type { | typeof __VLS_components.Image} */
             Image;
             // @ts-ignore
-            const __VLS_44 = __VLS_asFunctionalComponent1(__VLS_43, new __VLS_43({
+            const __VLS_59 = __VLS_asFunctionalComponent1(__VLS_58, new __VLS_58({
                 // @ts-ignore
                 size: (13),
             }));
-            const __VLS_45 = __VLS_44({
+            const __VLS_60 = __VLS_59({
                 size: (13),
-            }, ...__VLS_functionalComponentArgsRest(__VLS_44));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_59));
         }
-        else {
-            let __VLS_48;
+        else if (asset.type === 'video') {
+            let __VLS_63;
             /** @ts-ignore @type { | typeof __VLS_components.Video} */
             Video;
             // @ts-ignore
-            const __VLS_49 = __VLS_asFunctionalComponent1(__VLS_48, new __VLS_48({
+            const __VLS_64 = __VLS_asFunctionalComponent1(__VLS_63, new __VLS_63({
                 // @ts-ignore
                 size: (13),
             }));
-            const __VLS_50 = __VLS_49({
+            const __VLS_65 = __VLS_64({
                 size: (13),
-            }, ...__VLS_functionalComponentArgsRest(__VLS_49));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_64));
         }
-        (asset.type === "image" ? "图片" : "视频");
+        else {
+            let __VLS_68;
+            /** @ts-ignore @type { | typeof __VLS_components.Music} */
+            Music;
+            // @ts-ignore
+            const __VLS_69 = __VLS_asFunctionalComponent1(__VLS_68, new __VLS_68({
+                // @ts-ignore
+                size: (13),
+            }));
+            const __VLS_70 = __VLS_69({
+                size: (13),
+            }, ...__VLS_functionalComponentArgsRest(__VLS_69));
+        }
+        (asset.type === "image" ? "图片" : asset.type === "video" ? "视频" : "音频");
         if (asset.type === 'video' && asset.status === 'ready') {
             __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
                 ...{ class: "asset-card__play" },
             });
             /** @type {__VLS_StyleScopedClasses['asset-card__play']} */ ;
-            let __VLS_53;
+            let __VLS_73;
             /** @ts-ignore @type { | typeof __VLS_components.Play} */
             Play;
             // @ts-ignore
-            const __VLS_54 = __VLS_asFunctionalComponent1(__VLS_53, new __VLS_53({
+            const __VLS_74 = __VLS_asFunctionalComponent1(__VLS_73, new __VLS_73({
                 // @ts-ignore
                 size: (18), fill: "currentColor",
             }));
-            const __VLS_55 = __VLS_54({
+            const __VLS_75 = __VLS_74({
                 size: (18),
                 fill: "currentColor",
-            }, ...__VLS_functionalComponentArgsRest(__VLS_54));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_74));
         }
         if (formatDuration(asset.durationSeconds)) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
@@ -561,33 +719,137 @@ else if (assets.value.length) {
         (statusLabel(asset.status));
         (formatDimensions(asset));
         (formatDate(asset.createdAt));
-        __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
-            ...{ onClick: // @ts-ignore
-                (...[$event]) => {
-                    void $event;
-                    if (!!(loading.value))
-                        throw 0;
-                    if (!(assets.value.length))
-                        throw 0;
-                    return (downloadAsset(asset));
+        if (asset.status === 'failed' && asset.generationTaskId) {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                ...{ onClick: // @ts-ignore
+                    (...[$event]) => {
+                        void $event;
+                        if (!!(loading.value))
+                            throw 0;
+                        if (!(assets.value.length))
+                            throw 0;
+                        if (!(asset.status === 'failed' && asset.generationTaskId))
+                            throw 0;
+                        return (retryAsset(asset));
+                        // @ts-ignore
+                        [previewUrls, previewUrls, previewUrls, previewUrls, previewUrls,];
+                    } },
+                type: "button",
+                'aria-label': "重试失败任务",
+                disabled: (retryingId.value === asset.id),
+            });
+            if (retryingId.value === asset.id) {
+                let __VLS_78;
+                /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
+                LoaderCircle;
+                // @ts-ignore
+                const __VLS_79 = __VLS_asFunctionalComponent1(__VLS_78, new __VLS_78({
                     // @ts-ignore
-                    [previewUrls, previewUrls, previewUrls, previewUrls,];
-                } },
-            type: "button",
-            'aria-label': (`下载 ${asset.title}`),
-            disabled: (asset.status !== 'ready'),
-        });
-        let __VLS_58;
-        /** @ts-ignore @type { | typeof __VLS_components.Download} */
-        Download;
-        // @ts-ignore
-        const __VLS_59 = __VLS_asFunctionalComponent1(__VLS_58, new __VLS_58({
+                    ...{ class: "spin" }, size: (16),
+                }));
+                const __VLS_80 = __VLS_79({
+                    ...{ class: "spin" },
+                    size: (16),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_79));
+                /** @type {__VLS_StyleScopedClasses['spin']} */ ;
+            }
+            else {
+                let __VLS_83;
+                /** @ts-ignore @type { | typeof __VLS_components.RotateCcw} */
+                RotateCcw;
+                // @ts-ignore
+                const __VLS_84 = __VLS_asFunctionalComponent1(__VLS_83, new __VLS_83({
+                    // @ts-ignore
+                    size: (16),
+                }));
+                const __VLS_85 = __VLS_84({
+                    size: (16),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_84));
+            }
+        }
+        else if (asset.status === 'needs_review' && asset.generationTaskId) {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                ...{ onClick: // @ts-ignore
+                    (...[$event]) => {
+                        void $event;
+                        if (!!(loading.value))
+                            throw 0;
+                        if (!(assets.value.length))
+                            throw 0;
+                        if (!!(asset.status === 'failed' && asset.generationTaskId))
+                            throw 0;
+                        if (!(asset.status === 'needs_review' && asset.generationTaskId))
+                            throw 0;
+                        return (checkAsset(asset));
+                        // @ts-ignore
+                        [retryingId, retryingId,];
+                    } },
+                type: "button",
+                'aria-label': "检查任务状态",
+                disabled: (retryingId.value === asset.id),
+            });
+            if (retryingId.value === asset.id) {
+                let __VLS_88;
+                /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
+                LoaderCircle;
+                // @ts-ignore
+                const __VLS_89 = __VLS_asFunctionalComponent1(__VLS_88, new __VLS_88({
+                    // @ts-ignore
+                    ...{ class: "spin" }, size: (16),
+                }));
+                const __VLS_90 = __VLS_89({
+                    ...{ class: "spin" },
+                    size: (16),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_89));
+                /** @type {__VLS_StyleScopedClasses['spin']} */ ;
+            }
+            else {
+                let __VLS_93;
+                /** @ts-ignore @type { | typeof __VLS_components.RefreshCcw} */
+                RefreshCcw;
+                // @ts-ignore
+                const __VLS_94 = __VLS_asFunctionalComponent1(__VLS_93, new __VLS_93({
+                    // @ts-ignore
+                    size: (16),
+                }));
+                const __VLS_95 = __VLS_94({
+                    size: (16),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_94));
+            }
+        }
+        else {
+            __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+                ...{ onClick: // @ts-ignore
+                    (...[$event]) => {
+                        void $event;
+                        if (!!(loading.value))
+                            throw 0;
+                        if (!(assets.value.length))
+                            throw 0;
+                        if (!!(asset.status === 'failed' && asset.generationTaskId))
+                            throw 0;
+                        if (!!(asset.status === 'needs_review' && asset.generationTaskId))
+                            throw 0;
+                        return (downloadAsset(asset));
+                        // @ts-ignore
+                        [retryingId, retryingId,];
+                    } },
+                type: "button",
+                'aria-label': (`下载 ${asset.title}`),
+                disabled: (asset.status !== 'ready'),
+            });
+            let __VLS_98;
+            /** @ts-ignore @type { | typeof __VLS_components.Download} */
+            Download;
             // @ts-ignore
-            size: (16),
-        }));
-        const __VLS_60 = __VLS_59({
-            size: (16),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_59));
+            const __VLS_99 = __VLS_asFunctionalComponent1(__VLS_98, new __VLS_98({
+                // @ts-ignore
+                size: (16),
+            }));
+            const __VLS_100 = __VLS_99({
+                size: (16),
+            }, ...__VLS_functionalComponentArgsRest(__VLS_99));
+        }
         // @ts-ignore
         [];
     }
@@ -598,17 +860,17 @@ else {
     });
     /** @type {__VLS_StyleScopedClasses['assets-empty']} */ ;
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
-    let __VLS_63;
+    let __VLS_103;
     /** @ts-ignore @type { | typeof __VLS_components.Upload} */
     Upload;
     // @ts-ignore
-    const __VLS_64 = __VLS_asFunctionalComponent1(__VLS_63, new __VLS_63({
+    const __VLS_104 = __VLS_asFunctionalComponent1(__VLS_103, new __VLS_103({
         // @ts-ignore
         size: (23),
     }));
-    const __VLS_65 = __VLS_64({
+    const __VLS_105 = __VLS_104({
         size: (23),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_64));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_104));
     __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
     __VLS_asFunctionalElement1(__VLS_intrinsics.p, __VLS_intrinsics.p)({});
 }
@@ -634,19 +896,19 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     'aria-label': "上一页",
     disabled: (currentPage.value <= 1),
 });
-let __VLS_68;
+let __VLS_108;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronLeft} */
 ChevronLeft;
 // @ts-ignore
-const __VLS_69 = __VLS_asFunctionalComponent1(__VLS_68, new __VLS_68({
+const __VLS_109 = __VLS_asFunctionalComponent1(__VLS_108, new __VLS_108({
     // @ts-ignore
     size: (17),
 }));
-const __VLS_70 = __VLS_69({
+const __VLS_110 = __VLS_109({
     size: (17),
-}, ...__VLS_functionalComponentArgsRest(__VLS_69));
-const __VLS_73 = __VLS_tryAsConstant((__VLS_unwrap(totalPages, {})));
-for (const [page] of __VLS_vFor(__VLS_nonNull(__VLS_73))) {
+}, ...__VLS_functionalComponentArgsRest(__VLS_109));
+const __VLS_113 = __VLS_tryAsConstant((__VLS_unwrap(totalPages, {})));
+for (const [page] of __VLS_vFor(__VLS_nonNull(__VLS_113))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
         ...{ onClick: // @ts-ignore
             (...[$event]) => {
@@ -677,17 +939,17 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     'aria-label': "下一页",
     disabled: (currentPage.value >= __VLS_unwrap(totalPages, {})),
 });
-let __VLS_74;
+let __VLS_114;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronRight} */
 ChevronRight;
 // @ts-ignore
-const __VLS_75 = __VLS_asFunctionalComponent1(__VLS_74, new __VLS_74({
+const __VLS_115 = __VLS_asFunctionalComponent1(__VLS_114, new __VLS_114({
     // @ts-ignore
     size: (17),
 }));
-const __VLS_76 = __VLS_75({
+const __VLS_116 = __VLS_115({
     size: (17),
-}, ...__VLS_functionalComponentArgsRest(__VLS_75));
+}, ...__VLS_functionalComponentArgsRest(__VLS_115));
 __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
     ...{ class: "assets-page-size" },
 });
@@ -702,71 +964,34 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
 __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
     value: (12),
 });
-if (selectedAsset.value) {
-    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-        ...{ onClick: // @ts-ignore
-            (...[$event]) => {
-                void $event;
-                if (!(selectedAsset.value))
-                    throw 0;
-                return (selectedAsset.value = null);
-                // @ts-ignore
-                [pageSize, currentPage, totalPages, selectedAsset, selectedAsset,];
-            } },
-        ...{ class: "asset-preview-dialog" },
-        role: "dialog",
-        'aria-modal': "true",
-        'aria-label': (selectedAsset.value.title),
-    });
-    /** @type {__VLS_StyleScopedClasses['asset-preview-dialog']} */ ;
-    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
-        ...{ class: "asset-preview-dialog__body" },
-    });
-    /** @type {__VLS_StyleScopedClasses['asset-preview-dialog__body']} */ ;
-    __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
-        ...{ onClick: // @ts-ignore
-            (...[$event]) => {
-                void $event;
-                if (!(selectedAsset.value))
-                    throw 0;
-                return (selectedAsset.value = null);
-                // @ts-ignore
-                [selectedAsset, selectedAsset,];
-            } },
-        type: "button",
-        'aria-label': "关闭预览",
-    });
-    let __VLS_79;
-    /** @ts-ignore @type { | typeof __VLS_components.X} */
-    X;
+if (selectedAsset.value && selectedAssetUrl.value) {
+    const __VLS_119 = AssetPreviewDialog;
     // @ts-ignore
-    const __VLS_80 = __VLS_asFunctionalComponent1(__VLS_79, new __VLS_79({
+    const __VLS_120 = __VLS_asFunctionalComponent1(__VLS_119, new __VLS_119({
         // @ts-ignore
-        size: (19),
+        ...{ 'onClose': {} }, ...{ 'onRecreate': {} }, asset: (selectedAsset.value), mediaUrl: (selectedAssetUrl.value),
     }));
-    const __VLS_81 = __VLS_80({
-        size: (19),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_80));
-    if (selectedAsset.value.type === 'image') {
-        __VLS_asFunctionalElement1(__VLS_intrinsics.img)({
-            src: (previewUrls.value[selectedAsset.value.id]),
-            alt: (selectedAsset.value.title),
-        });
-    }
-    else {
-        __VLS_asFunctionalElement1(__VLS_intrinsics.video)({
-            src: (previewUrls.value[selectedAsset.value.id]),
-            controls: true,
-        });
-    }
-    __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({});
-    __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
-    (selectedAsset.value.title);
-    __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
-    (formatBytes(selectedAsset.value.sizeBytes));
-    (formatDate(selectedAsset.value.createdAt));
+    const __VLS_121 = __VLS_120({
+        ...{ 'onClose': {} },
+        ...{ 'onRecreate': {} },
+        asset: (selectedAsset.value),
+        mediaUrl: (selectedAssetUrl.value),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_120));
+    let __VLS_124;
+    const __VLS_125 = {
+        /** @type {typeof __VLS_124.close} */
+        onClose: (closeAsset),
+    };
+    void __VLS_125;
+    const __VLS_126 = {
+        /** @type {typeof __VLS_124.recreate} */
+        onRecreate: (useSameParameters),
+    };
+    void __VLS_126;
+    var __VLS_122;
+    var __VLS_123;
 }
 // @ts-ignore
-[previewUrls, previewUrls, selectedAsset, selectedAsset, selectedAsset, selectedAsset, selectedAsset, selectedAsset, selectedAsset,];
+[pageSize, currentPage, totalPages, selectedAsset, selectedAsset, selectedAssetUrl, selectedAssetUrl,];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

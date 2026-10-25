@@ -7,16 +7,68 @@ import (
 
 	"nova-creator-platform/services/api/internal/admingenerations"
 	"nova-creator-platform/services/api/internal/assets"
+	"nova-creator-platform/services/api/internal/generation"
 )
 
 type adminGenerationHandlers struct {
-	service *admingenerations.Service
-	assets  *assets.Service
-	logger  *slog.Logger
+	service  *admingenerations.Service
+	assets   *assets.Service
+	recovery *generation.RecoveryService
+	logger   *slog.Logger
 }
 
-func newAdminGenerationHandlers(service *admingenerations.Service, assetService *assets.Service, logger *slog.Logger) adminGenerationHandlers {
-	return adminGenerationHandlers{service: service, assets: assetService, logger: logger}
+func newAdminGenerationHandlers(service *admingenerations.Service, assetService *assets.Service, recovery *generation.RecoveryService, logger *slog.Logger) adminGenerationHandlers {
+	return adminGenerationHandlers{service: service, assets: assetService, recovery: recovery, logger: logger}
+}
+
+func (handlers adminGenerationHandlers) Check(w http.ResponseWriter, r *http.Request) {
+	task, err := handlers.recovery.CheckAdmin(r.Context(), r.PathValue("taskId"))
+	if err != nil {
+		handlers.writeReviewError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: task, Msg: "状态已检查"})
+}
+func (handlers adminGenerationHandlers) Review(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Action    string `json:"action"`
+		ResultURL string `json:"resultUrl"`
+		Reason    string `json:"reason"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40042, Msg: "接管参数不正确"})
+		return
+	}
+	var task admingenerations.Task
+	var err error
+	switch input.Action {
+	case "confirm_failed":
+		var value generation.Task
+		value, err = handlers.recovery.ConfirmFailed(r.Context(), r.PathValue("taskId"), input.Reason)
+		if err == nil {
+			task, err = handlers.service.Get(r.Context(), value.ID)
+		}
+	case "provide_result":
+		var value generation.Task
+		value, err = handlers.recovery.ProvideResult(r.Context(), r.PathValue("taskId"), input.ResultURL)
+		if err == nil {
+			task, err = handlers.service.Get(r.Context(), value.ID)
+		}
+	default:
+		err = admingenerations.ErrInvalidInput
+	}
+	if err != nil {
+		handlers.writeReviewError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: task, Msg: "任务已处理"})
+}
+func (handlers adminGenerationHandlers) writeReviewError(w http.ResponseWriter, err error) {
+	if errors.Is(err, generation.ErrNotReviewable) {
+		writeJSON(w, http.StatusConflict, response{Code: 40943, Msg: "任务不处于待确认状态"})
+		return
+	}
+	handlers.writeError(w, err)
 }
 
 func (handlers adminGenerationHandlers) Preview(w http.ResponseWriter, r *http.Request) {

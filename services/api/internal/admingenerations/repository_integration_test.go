@@ -49,6 +49,13 @@ func TestAdminGenerationActionsAndPublicAccountSearch(t *testing.T) {
 
 	insertTask(queuedTaskID, queuedAssetID, "queued", 2)
 	repository := NewRepository(pool)
+	if _, err := pool.Exec(ctx, `INSERT INTO generation_attempts(id,task_id,attempt_no,channel_id,protocol,request_path,status,http_status,duration_ms,error_message,completed_at) VALUES($1,$2,1,$3,'openai','/images/generations','failed',503,125,'upstream unavailable',now())`, uuid.NewString(), queuedTaskID, channelID); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := repository.Get(ctx, queuedTaskID)
+	if err != nil || len(detail.Attempts) != 1 || detail.Attempts[0].HTTPStatus == nil || *detail.Attempts[0].HTTPStatus != 503 {
+		t.Fatalf("attempt detail: %#v, %v", detail.Attempts, err)
+	}
 	if _, err := repository.Cancel(ctx, queuedTaskID); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}

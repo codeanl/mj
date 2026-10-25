@@ -1,6 +1,6 @@
 import { ADMIN_ACCESS_TOKEN_KEY, request } from "./http"
 
-export type GenerationStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled"
+export type GenerationStatus = "queued" | "running" | "needs_review" | "succeeded" | "failed" | "cancelled"
 export type GenerationKind = "image" | "video"
 
 export type AdminGenerationTask = {
@@ -28,6 +28,9 @@ export type AdminGenerationTask = {
   createdAt: string
   startedAt?: string
   completedAt?: string
+	upstreamTaskId?: string
+	reviewReason?: string
+	attempts: Array<{ attemptNo:number; channelId?:string; channelName:string; protocol:string; requestPath:string; status:string; httpStatus?:number; durationMs?:number; errorMessage?:string; createdAt:string; completedAt?:string }>
 }
 
 export type GenerationSummary = {
@@ -37,6 +40,7 @@ export type GenerationSummary = {
   succeeded: number
   failed: number
   cancelled: number
+	needsReview: number
   pointsSpent: number
 }
 
@@ -88,3 +92,6 @@ export async function getGenerationPreview(taskId: string) {
 function action(taskId: string, name: "retry" | "cancel" | "refund") {
   return request<GenerationActionResult>(`/admin/generations/${encodeURIComponent(taskId)}/${name}`, { method: "POST" })
 }
+
+export function checkGeneration(taskId:string){ return request<AdminGenerationTask>(`/admin/generations/${encodeURIComponent(taskId)}/check`,{method:"POST"}) }
+export function reviewGeneration(taskId:string,input:{action:"confirm_failed"|"provide_result";resultUrl?:string;reason?:string}){ return request<AdminGenerationTask>(`/admin/generations/${encodeURIComponent(taskId)}/review`,{method:"POST",body:JSON.stringify(input)}) }

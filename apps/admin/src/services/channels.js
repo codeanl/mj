@@ -11,6 +11,8 @@ export function createChannel(input) {
 export function updateChannel(id, input) {
     return request(`/admin/channels/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) }).then((result) => result.channel);
 }
+export function simulateRoute(input) { const query = new URLSearchParams(input); return request(`/admin/channels/simulate?${query}`); }
+export function getChannelStats(window) { return request(`/admin/channels/stats?window=${window}`); }
 export function deleteChannel(id) {
     return request(`/admin/channels/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

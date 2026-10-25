@@ -40,9 +40,28 @@ func TestGenerationCostUsesModelAndImageQualityMultipliers(t *testing.T) {
 	}
 }
 
+func TestVideoGenerationCostUsesPerSecondRateAndResolutionMultiplier(t *testing.T) {
+	repository := &memoryRepository{config: RuleConfig{
+		Settings: Settings{
+			DefaultModelCost:        1,
+			VideoQualityMultipliers: map[string]float64{"1080": 2, "4K": 4},
+		},
+		Rules: []ModelRule{{ModelID: "MiniMax-H3", Cost: 3}},
+	}}
+	service := NewService(repository)
+	legacyKeyCost, err := service.VideoGenerationCost(context.Background(), "minimax-h3", "1080P", 10)
+	if err != nil || legacyKeyCost != 60 {
+		t.Fatalf("expected 60 points from 3 points/second for 10 seconds at 2x, got %v err=%v", legacyKeyCost, err)
+	}
+	exactKeyCost, err := service.VideoGenerationCost(context.Background(), "MiniMax-H3", "4K", 5)
+	if err != nil || exactKeyCost != 60 {
+		t.Fatalf("expected 60 points from 3 points/second for 5 seconds at 4x, got %v err=%v", exactKeyCost, err)
+	}
+}
+
 func TestSaveConfigRejectsInvalidOrDuplicateRules(t *testing.T) {
 	service := NewService(&memoryRepository{})
-	base := RuleConfig{Settings: Settings{InitialPoints: 100, DefaultModelCost: 1, ImageQualityMultipliers: map[string]float64{"1K": 1}, VideoQualityMultipliers: map[string]float64{}, VideoSecondsMultipliers: map[string]float64{}}}
+	base := RuleConfig{Settings: Settings{InitialPoints: 100, DefaultModelCost: 1, ImageQualityMultipliers: map[string]float64{"1K": 1}, VideoQualityMultipliers: map[string]float64{}}}
 	for _, rules := range [][]ModelRule{{{ModelID: "model", Cost: -1}}, {{ModelID: "model", Cost: 1}, {ModelID: "MODEL", Cost: 2}}} {
 		input := base
 		input.Rules = rules

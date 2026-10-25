@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	rand "math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,6 +26,58 @@ type Service struct {
 	repository *Repository
 	cipher     SecretCipher
 	client     *http.Client
+}
+
+func (service *Service) ResolveImageCandidates(ctx context.Context, modelID string) ([]ResolvedModel, error) {
+	return service.ResolveCandidates(ctx, "image", modelID)
+}
+func (service *Service) ResolveCandidates(ctx context.Context, capability, modelID string) ([]ResolvedModel, error) {
+	pairs, err := service.repository.ResolveModels(ctx, capability, strings.TrimSpace(modelID))
+	if err != nil {
+		return nil, err
+	}
+	resolved := make([]ResolvedModel, 0, len(pairs))
+	for _, pair := range pairs {
+		apiKey, err := service.cipher.Decrypt(pair.Channel.apiKeyCiphertext)
+		if err != nil {
+			continue
+		}
+		definition, _ := FindProtocolDefinition(pair.Channel.Protocol)
+		advanced := normalizeAdvancedConfig(pair.Channel.AdvancedConfig, definition)
+		if apiKey == "" && advanced.AuthMode != "none" {
+			continue
+		}
+		resolved = append(resolved, ResolvedModel{ChannelID: pair.Channel.ID, BaseURL: pair.Channel.BaseURL, APIKey: apiKey, Protocol: pair.Channel.Protocol, AdvancedConfig: advanced, UpstreamModel: pair.Model.ModelID, Priority: pair.Channel.Priority, Weight: pair.Channel.Weight, MaxConcurrency: pair.Channel.MaxConcurrency, TimeoutSeconds: pair.Channel.TimeoutSeconds})
+	}
+	if len(resolved) == 0 {
+		return nil, ErrChannelDisabled
+	}
+	minimum := resolved[0].Priority
+	end, total := 0, 0
+	for end < len(resolved) && resolved[end].Priority == minimum {
+		total += resolved[end].Weight
+		end++
+	}
+	if end > 1 && total > 0 {
+		pick := rand.IntN(total)
+		selected := 0
+		for index := 0; index < end; index++ {
+			pick -= resolved[index].Weight
+			if pick < 0 {
+				selected = index
+				break
+			}
+		}
+		resolved[0], resolved[selected] = resolved[selected], resolved[0]
+	}
+	return resolved, nil
+}
+
+func (service *Service) TryAcquire(ctx context.Context, channelID string) (bool, error) {
+	return service.repository.TryAcquire(ctx, channelID)
+}
+func (service *Service) Release(ctx context.Context, channelID string, success bool, latencyMS int64, message string) error {
+	return service.repository.Release(ctx, channelID, success, latencyMS, message)
 }
 
 func NewService(repository *Repository, cipher SecretCipher, timeout time.Duration) *Service {
@@ -125,7 +178,10 @@ func (service *Service) PublicModels(ctx context.Context, capability string) ([]
 }
 
 func (service *Service) ResolveImageModel(ctx context.Context, channelID, modelID string) (ResolvedModel, error) {
-	channel, model, err := service.repository.ResolveImageModel(ctx, channelID, strings.TrimSpace(modelID))
+	return service.ResolveModel(ctx, "image", channelID, modelID)
+}
+func (service *Service) ResolveModel(ctx context.Context, capability, channelID, modelID string) (ResolvedModel, error) {
+	channel, model, err := service.repository.ResolveModel(ctx, capability, channelID, strings.TrimSpace(modelID))
 	if err != nil {
 		if errors.Is(err, ErrModelNotFound) {
 			return ResolvedModel{}, ErrChannelDisabled
@@ -141,10 +197,11 @@ func (service *Service) ResolveImageModel(ctx context.Context, channelID, modelI
 	if apiKey == "" && channel.AdvancedConfig.AuthMode != "none" {
 		return ResolvedModel{}, ErrChannelDisabled
 	}
-	return ResolvedModel{ChannelID: channel.ID, BaseURL: channel.BaseURL, APIKey: apiKey, Protocol: channel.Protocol, AdvancedConfig: channel.AdvancedConfig, UpstreamModel: model.ModelID}, nil
+	return ResolvedModel{ChannelID: channel.ID, BaseURL: channel.BaseURL, APIKey: apiKey, Protocol: channel.Protocol, AdvancedConfig: channel.AdvancedConfig, UpstreamModel: model.ModelID, Priority: channel.Priority, Weight: channel.Weight, MaxConcurrency: channel.MaxConcurrency, TimeoutSeconds: channel.TimeoutSeconds}, nil
 }
 
 func (service *Service) TestConnection(ctx context.Context, id string, persistModels bool) (ConnectionResult, error) {
+	startedAt := time.Now()
 	channel, err := service.repository.Find(ctx, id)
 	if err != nil {
 		return ConnectionResult{}, err
@@ -164,8 +221,10 @@ func (service *Service) TestConnection(ctx context.Context, id string, persistMo
 	if err != nil {
 		message := err.Error()
 		_ = service.repository.SaveTestResult(ctx, id, "failed", message)
+		_ = service.repository.SaveHealthCheck(ctx, id, false, time.Since(startedAt).Milliseconds(), message)
 		return ConnectionResult{Status: "failed", Message: message, DiscoveredModels: []string{}}, nil
 	}
+	_ = service.repository.SaveHealthCheck(ctx, id, true, time.Since(startedAt).Milliseconds(), "")
 	if persistModels && len(models) > 0 {
 		if err := service.repository.UpsertDiscoveredModels(ctx, id, models); err != nil {
 			return ConnectionResult{}, err
@@ -302,6 +361,27 @@ func normalizeChannelInput(input ChannelInput) (ChannelInput, error) {
 		input.BaseURL = definition.DefaultBaseURL
 	}
 	input.AdvancedConfig = normalizeAdvancedConfig(input.AdvancedConfig, definition)
+	if input.Priority <= 0 {
+		input.Priority = 100
+	}
+	if input.Weight <= 0 {
+		input.Weight = 100
+	}
+	if input.MaxConcurrency <= 0 {
+		input.MaxConcurrency = 4
+	}
+	if input.TimeoutSeconds <= 0 {
+		input.TimeoutSeconds = 300
+	}
+	if input.FailureThreshold <= 0 {
+		input.FailureThreshold = 3
+	}
+	if input.CooldownSeconds <= 0 {
+		input.CooldownSeconds = 60
+	}
+	if input.Priority > 10000 || input.Weight > 10000 || input.MaxConcurrency > 1000 || input.TimeoutSeconds > 3600 || input.FailureThreshold > 100 || input.CooldownSeconds > 86400 {
+		return ChannelInput{}, ErrInvalidChannel
+	}
 	parsed, err := url.Parse(input.BaseURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || utf8.RuneCountInString(input.Name) < 2 || utf8.RuneCountInString(input.Name) > 80 {
 		return ChannelInput{}, ErrInvalidChannel

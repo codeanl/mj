@@ -1,6 +1,7 @@
 package httptransport
 
 import (
+	"bytes"
 	"errors"
 	"image"
 	_ "image/gif"
@@ -69,7 +70,7 @@ func (handlers assetHandlers) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, response{Code: 40013, Msg: "请选择图片或视频文件"})
+		writeJSON(w, http.StatusBadRequest, response{Code: 40013, Msg: "请选择图片、视频或音频文件"})
 		return
 	}
 	defer file.Close()
@@ -133,6 +134,18 @@ func (handlers assetHandlers) Content(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer content.Close()
+	if r.URL.Query().Get("thumbnail") == "1" && asset.Kind == assets.KindImage {
+		thumbnail, thumbnailErr := assets.CreateImageThumbnail(content, 400)
+		if thumbnailErr != nil {
+			handlers.logger.Warn("asset thumbnail failed", "asset_id", asset.ID, "error", thumbnailErr)
+			writeJSON(w, http.StatusUnprocessableEntity, response{Code: 42211, Msg: "图片缩略图暂不可用"})
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		http.ServeContent(w, r, asset.Title+".jpg", asset.CreatedAt, bytes.NewReader(thumbnail))
+		return
+	}
 	w.Header().Set("Content-Type", asset.MimeType)
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	if r.URL.Query().Get("download") == "1" {

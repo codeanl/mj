@@ -4,7 +4,7 @@ export type GenerationTask = {
   taskId: string
   assetId: string
   type: "image" | "video"
-  status: "queued" | "running" | "succeeded" | "failed"
+	status: "queued" | "running" | "needs_review" | "succeeded" | "failed"
   model: string
   prompt: string
   size: string
@@ -37,6 +37,7 @@ export type GenerationCapability = {
   models: GenerationOption[]
   sizes: ImageSizeOption[]
   qualities: GenerationOption[]
+	durations?: GenerationOption[]
 }
 
 export type GenerationCapabilities = {
@@ -54,7 +55,25 @@ export async function createImageGeneration(input: { prompt: string; model: stri
   return response.data.data
 }
 
+export type VideoGenerationMode = "text" | "frames" | "reference"
+export type VideoReferenceRole = "first_frame" | "last_frame" | "reference_image" | "reference_video" | "reference_audio"
+
+export async function createVideoGeneration(input:{prompt:string;model:string;size:string;quality:string;durationSeconds:number;soundEnabled:boolean;watermarkEnabled:boolean;mode:VideoGenerationMode;references?:Array<{assetId:string;role:VideoReferenceRole}>}){
+	const response=await http.post<ApiResponse<ImageGenerationBatch>>("/generations/videos",input)
+	return response.data.data
+}
+
 export async function getGenerationTask(taskId: string) {
   const response = await http.get<ApiResponse<GenerationTask>>(`/generations/${encodeURIComponent(taskId)}`)
   return response.data.data
+}
+
+export async function retryGenerationTask(taskId: string) {
+	const response = await http.post<ApiResponse<{ taskId: string; status: string; pointsRemaining?: number }>>(`/generations/${encodeURIComponent(taskId)}/retry`)
+	return response.data.data
+}
+
+export async function checkGenerationTask(taskId: string) {
+	const response = await http.post<ApiResponse<GenerationTask>>(`/generations/${encodeURIComponent(taskId)}/check`)
+	return response.data.data
 }

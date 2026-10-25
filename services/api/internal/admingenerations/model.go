@@ -27,6 +27,23 @@ type Task struct {
 	CreatedAt       time.Time  `json:"createdAt"`
 	StartedAt       *time.Time `json:"startedAt,omitempty"`
 	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+	Attempts        []Attempt  `json:"attempts"`
+	UpstreamTaskID  string     `json:"upstreamTaskId,omitempty"`
+	ReviewReason    string     `json:"reviewReason,omitempty"`
+}
+
+type Attempt struct {
+	AttemptNo    int        `json:"attemptNo"`
+	ChannelID    string     `json:"channelId,omitempty"`
+	ChannelName  string     `json:"channelName"`
+	Protocol     string     `json:"protocol"`
+	RequestPath  string     `json:"requestPath"`
+	Status       string     `json:"status"`
+	HTTPStatus   *int       `json:"httpStatus,omitempty"`
+	DurationMS   *int64     `json:"durationMs,omitempty"`
+	ErrorMessage string     `json:"errorMessage,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	CompletedAt  *time.Time `json:"completedAt,omitempty"`
 }
 
 type Summary struct {
@@ -36,6 +53,7 @@ type Summary struct {
 	Succeeded   int64   `json:"succeeded"`
 	Failed      int64   `json:"failed"`
 	Cancelled   int64   `json:"cancelled"`
+	NeedsReview int64   `json:"needsReview"`
 	PointsSpent float64 `json:"pointsSpent"`
 }
 

@@ -33,11 +33,11 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 func (repository *PostgresRepository) GetConfig(ctx context.Context) (RuleConfig, error) {
 	var config RuleConfig
-	var imageJSON, videoQualityJSON, videoSecondsJSON []byte
+	var imageJSON, videoQualityJSON []byte
 	err := repository.pool.QueryRow(ctx, `
-		SELECT initial_points, default_model_cost, image_quality_multipliers, video_quality_multipliers, video_seconds_multipliers, updated_at
+		SELECT initial_points, default_model_cost, image_quality_multipliers, video_quality_multipliers, updated_at
 		FROM points_settings WHERE id = 1
-	`).Scan(&config.Settings.InitialPoints, &config.Settings.DefaultModelCost, &imageJSON, &videoQualityJSON, &videoSecondsJSON, &config.Settings.UpdatedAt)
+	`).Scan(&config.Settings.InitialPoints, &config.Settings.DefaultModelCost, &imageJSON, &videoQualityJSON, &config.Settings.UpdatedAt)
 	if err != nil {
 		return RuleConfig{}, err
 	}
@@ -45,9 +45,6 @@ func (repository *PostgresRepository) GetConfig(ctx context.Context) (RuleConfig
 		return RuleConfig{}, err
 	}
 	if err := json.Unmarshal(videoQualityJSON, &config.Settings.VideoQualityMultipliers); err != nil {
-		return RuleConfig{}, err
-	}
-	if err := json.Unmarshal(videoSecondsJSON, &config.Settings.VideoSecondsMultipliers); err != nil {
 		return RuleConfig{}, err
 	}
 	ruleRows, err := repository.pool.Query(ctx, `SELECT model_id, cost FROM model_point_rules ORDER BY lower(model_id)`)
@@ -92,7 +89,6 @@ func (repository *PostgresRepository) GetConfig(ctx context.Context) (RuleConfig
 func (repository *PostgresRepository) SaveConfig(ctx context.Context, config RuleConfig) (RuleConfig, error) {
 	imageJSON, _ := json.Marshal(config.Settings.ImageQualityMultipliers)
 	videoQualityJSON, _ := json.Marshal(config.Settings.VideoQualityMultipliers)
-	videoSecondsJSON, _ := json.Marshal(config.Settings.VideoSecondsMultipliers)
 	tx, err := repository.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return RuleConfig{}, err
@@ -102,9 +98,9 @@ func (repository *PostgresRepository) SaveConfig(ctx context.Context, config Rul
 		UPDATE points_settings
 		SET initial_points = $1::numeric, default_model_cost = $2::numeric,
 		    image_quality_multipliers = $3::jsonb, video_quality_multipliers = $4::jsonb,
-		    video_seconds_multipliers = $5::jsonb, updated_at = now()
+		    updated_at = now()
 		WHERE id = 1
-	`, config.Settings.InitialPoints, config.Settings.DefaultModelCost, imageJSON, videoQualityJSON, videoSecondsJSON); err != nil {
+	`, config.Settings.InitialPoints, config.Settings.DefaultModelCost, imageJSON, videoQualityJSON); err != nil {
 		return RuleConfig{}, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM model_point_rules`); err != nil {

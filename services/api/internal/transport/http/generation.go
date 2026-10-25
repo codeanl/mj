@@ -5,16 +5,60 @@ import (
 	"log/slog"
 	"net/http"
 
+	"nova-creator-platform/services/api/internal/admingenerations"
 	"nova-creator-platform/services/api/internal/generation"
 )
 
 type generationHandlers struct {
-	service *generation.Service
-	logger  *slog.Logger
+	service          *generation.Service
+	adminGenerations *admingenerations.Service
+	recovery         *generation.RecoveryService
+	logger           *slog.Logger
 }
 
-func newGenerationHandlers(service *generation.Service, logger *slog.Logger) generationHandlers {
-	return generationHandlers{service: service, logger: logger}
+func (handlers generationHandlers) Retry(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	result, err := handlers.adminGenerations.RetryForUser(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, admingenerations.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, response{Code: 40411, Msg: "生成任务不存在"})
+		} else if errors.Is(err, admingenerations.ErrInvalidState) {
+			writeJSON(w, http.StatusConflict, response{Code: 40941, Msg: "仅失败任务可以重试"})
+		} else if errors.Is(err, admingenerations.ErrInsufficientPoints) {
+			writeJSON(w, http.StatusPaymentRequired, response{Code: 40221, Msg: "积分余额不足"})
+		} else {
+			handlers.logger.Error("generation retry failed", "error", err)
+			writeJSON(w, http.StatusInternalServerError, response{Code: 50021, Msg: "重试失败"})
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"taskId": result.Task.ID, "status": result.Task.Status, "pointsRemaining": result.PointsRemaining}, Msg: "任务已重新排队"})
+}
+
+func newGenerationHandlers(service *generation.Service, adminGenerations *admingenerations.Service, recovery *generation.RecoveryService, logger *slog.Logger) generationHandlers {
+	return generationHandlers{service: service, adminGenerations: adminGenerations, recovery: recovery, logger: logger}
+}
+
+func (handlers generationHandlers) Check(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	task, err := handlers.recovery.Check(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, generation.ErrNotReviewable) {
+			writeJSON(w, http.StatusConflict, response{Code: 40943, Msg: "任务不处于待确认状态"})
+		} else {
+			handlers.writeGenerationError(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: task, Msg: "状态已检查"})
 }
 
 func (handlers generationHandlers) CreateImage(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +88,36 @@ func (handlers generationHandlers) CreateImage(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusAccepted, response{Code: 0, Data: batch, Msg: "生成任务已创建"})
+}
+
+func (handlers generationHandlers) CreateVideo(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	var input struct {
+		Prompt           string                      `json:"prompt"`
+		Model            string                      `json:"model"`
+		Size             string                      `json:"size"`
+		Quality          string                      `json:"quality"`
+		DurationSeconds  int                         `json:"durationSeconds"`
+		SoundEnabled     bool                        `json:"soundEnabled"`
+		WatermarkEnabled bool                        `json:"watermarkEnabled"`
+		Mode             string                      `json:"mode"`
+		References       []generation.VideoReference `json:"references"`
+	}
+	input.SoundEnabled = true
+	if decodeJSON(r, &input) != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40021, Msg: "请求参数格式不正确"})
+		return
+	}
+	batch, err := handlers.service.CreateVideo(r.Context(), generation.CreateVideoInput{UserID: user.ID, Prompt: input.Prompt, Model: input.Model, Size: input.Size, Quality: input.Quality, DurationSeconds: input.DurationSeconds, SoundEnabled: input.SoundEnabled, WatermarkEnabled: input.WatermarkEnabled, Mode: input.Mode, References: input.References})
+	if err != nil {
+		handlers.writeGenerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response{Code: 0, Data: batch, Msg: "视频任务已创建"})
 }
 
 func (handlers generationHandlers) GetCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -83,8 +157,10 @@ func (handlers generationHandlers) writeGenerationError(w http.ResponseWriter, e
 		writeJSON(w, http.StatusBadRequest, response{Code: 40024, Msg: "每次最多生成 4 张图片"})
 	case errors.Is(err, generation.ErrInvalidReference):
 		writeJSON(w, http.StatusBadRequest, response{Code: 40025, Msg: "参考图最多 3 张，且必须是当前用户的有效图片"})
+	case errors.Is(err, generation.ErrInvalidVideoReference):
+		writeJSON(w, http.StatusBadRequest, response{Code: 40026, Msg: "视频素材模式、数量、类型或角色不正确"})
 	case errors.Is(err, generation.ErrProviderUnavailable):
-		writeJSON(w, http.StatusServiceUnavailable, response{Code: 50311, Msg: "图片生成渠道尚未配置"})
+		writeJSON(w, http.StatusServiceUnavailable, response{Code: 50311, Msg: "所选模型渠道尚未配置或不可用"})
 	case errors.Is(err, generation.ErrInsufficientPoints):
 		writeJSON(w, http.StatusPaymentRequired, response{Code: 40221, Msg: "积分余额不足，请联系管理员充值积分"})
 	case errors.Is(err, generation.ErrTaskNotFound):

@@ -39,6 +39,27 @@ func (handlers modelChannelHandlers) List(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"channels": channels}, Msg: "获取成功"})
 }
 
+func (handlers modelChannelHandlers) Simulate(w http.ResponseWriter, r *http.Request) {
+	result, err := handlers.service.SimulateImageRoute(r.Context(), r.URL.Query().Get("model"), r.URL.Query().Get("size"), r.URL.Query().Get("quality"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: "路由模拟完成"})
+}
+func (handlers modelChannelHandlers) Stats(w http.ResponseWriter, r *http.Request) {
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "24h"
+	}
+	result, err := handlers.service.RuntimeStats(r.Context(), window)
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: "获取成功"})
+}
+
 func (handlers modelChannelHandlers) Create(w http.ResponseWriter, r *http.Request) {
 	var input modelchannels.ChannelInput
 	if decodeJSON(r, &input) != nil {

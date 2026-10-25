@@ -3,7 +3,7 @@ package modelchannels
 import "testing"
 
 func TestProtocolRegistryMatchesVozebDefinitions(t *testing.T) {
-	want := []string{"openai", "yumeng", "gemini", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "custom", "globalaiopc", "compatible", "auto"}
+	want := []string{"openai", "yumeng", "gemini", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "seedance-special", "compshare-minimax-h3", "custom", "globalaiopc", "compatible", "auto"}
 	definitions := ProtocolDefinitions()
 	if len(definitions) != len(want) {
 		t.Fatalf("expected %d protocols, got %d", len(want), len(definitions))
@@ -33,7 +33,7 @@ func TestStrictProtocolNormalizesAdvancedConfiguration(t *testing.T) {
 }
 
 func TestBuiltInProtocolsExposeDocumentedModels(t *testing.T) {
-	for _, id := range []string{"yumeng", "seedance-special"} {
+	for _, id := range []string{"yumeng", "seedance-special", "compshare-minimax-h3"} {
 		definition, ok := FindProtocolDefinition(id)
 		if !ok || len(definition.BuiltInModels) == 0 {
 			t.Fatalf("protocol %s must expose built-in models", id)

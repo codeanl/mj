@@ -86,3 +86,12 @@ func TestStoresUploadedAndGeneratedSources(t *testing.T) {
 		t.Fatalf("expected generated source, got asset=%q input=%q", generated.Source, repository.lastInput.Source)
 	}
 }
+
+func TestParseMediaTypeSupportsVideoReferenceAudio(t *testing.T) {
+	for mimeType, expectedKind := range map[string]Kind{"audio/mpeg": KindAudio, "audio/wav": KindAudio, "audio/ogg": KindAudio, "video/mp4": KindVideo} {
+		kind, extension, ok := ParseMediaType(mimeType)
+		if !ok || kind != expectedKind || extension == "" {
+			t.Fatalf("unexpected media mapping for %s: kind=%q extension=%q ok=%v", mimeType, kind, extension, ok)
+		}
+	}
+}

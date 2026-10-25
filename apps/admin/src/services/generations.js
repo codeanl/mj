@@ -31,3 +31,5 @@ export async function getGenerationPreview(taskId) {
 function action(taskId, name) {
     return request(`/admin/generations/${encodeURIComponent(taskId)}/${name}`, { method: "POST" });
 }
+export function checkGeneration(taskId) { return request(`/admin/generations/${encodeURIComponent(taskId)}/check`, { method: "POST" }); }
+export function reviewGeneration(taskId, input) { return request(`/admin/generations/${encodeURIComponent(taskId)}/review`, { method: "POST", body: JSON.stringify(input) }); }

@@ -72,7 +72,7 @@ Windows 下可在项目目录运行：
 ## 素材接口
 
 - `GET /api/v1/assets`：按当前用户分页查询，支持 `type=image|video`、`source=generated|uploaded` 与 `search`。
-- `POST /api/v1/assets`：使用 `multipart/form-data` 上传图片或视频。
+- `POST /api/v1/assets`：使用 `multipart/form-data` 上传图片、视频或音频。
 - `GET /api/v1/assets/{id}/content`：受保护的素材预览与下载。
 
 ## 生成接口
@@ -82,7 +82,7 @@ Windows 下可在项目目录运行：
 - `POST /api/v1/generations/images`：提交 `prompt`、`model`、`size` 和 `quality` 创建图片任务。
 - `GET /api/v1/generations/{id}`：读取当前用户的生成任务状态。
 
-图片生成任务保存稳定的渠道和模型快照。Worker 按渠道协议、鉴权和高级路径调用上游；当前原生执行 OpenAI 兼容图片协议与 Stable Diffusion txt2img，其他协议的文本、视频、音频执行器可在对应工作台接入时复用同一渠道注册表。
+生成任务保存稳定的渠道、模型和参考素材角色。Worker 按渠道协议、鉴权和高级路径调用上游；当前原生执行 OpenAI 兼容图片、Stable Diffusion 图片以及 CompShare MiniMax H3 视频协议，MiniMax H3 支持文生视频、首尾帧和图片/视频/音频全能参考。
 
 首页提交图片任务后保持在当前创作页，并立即把任务加入“最近创作”。列表仅在存在生成中记录时按 `VITE_GENERATION_REFRESH_INTERVAL_MS` 静默刷新，完成或失败后自动停止；刷新期间复用未变化的媒体预览，不替换为加载骨架。
 

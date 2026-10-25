@@ -3,21 +3,33 @@ package modelchannels
 import "time"
 
 type Channel struct {
-	ID               string         `json:"id"`
-	Name             string         `json:"name"`
-	BaseURL          string         `json:"baseUrl"`
-	Protocol         string         `json:"protocol"`
-	AdvancedConfig   AdvancedConfig `json:"advancedConfig"`
-	Enabled          bool           `json:"enabled"`
-	HasAPIKey        bool           `json:"hasApiKey"`
-	APIKeyMasked     string         `json:"apiKeyMasked"`
-	LastTestStatus   string         `json:"lastTestStatus"`
-	LastTestMessage  string         `json:"lastTestMessage"`
-	LastTestedAt     *time.Time     `json:"lastTestedAt,omitempty"`
-	CreatedAt        time.Time      `json:"createdAt"`
-	UpdatedAt        time.Time      `json:"updatedAt"`
-	Models           []Model        `json:"models"`
-	apiKeyCiphertext string
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	BaseURL             string         `json:"baseUrl"`
+	Protocol            string         `json:"protocol"`
+	AdvancedConfig      AdvancedConfig `json:"advancedConfig"`
+	Enabled             bool           `json:"enabled"`
+	HasAPIKey           bool           `json:"hasApiKey"`
+	APIKeyMasked        string         `json:"apiKeyMasked"`
+	LastTestStatus      string         `json:"lastTestStatus"`
+	LastTestMessage     string         `json:"lastTestMessage"`
+	LastTestedAt        *time.Time     `json:"lastTestedAt,omitempty"`
+	CreatedAt           time.Time      `json:"createdAt"`
+	UpdatedAt           time.Time      `json:"updatedAt"`
+	Priority            int            `json:"priority"`
+	Weight              int            `json:"weight"`
+	MaxConcurrency      int            `json:"maxConcurrency"`
+	TimeoutSeconds      int            `json:"timeoutSeconds"`
+	FailureThreshold    int            `json:"failureThreshold"`
+	CooldownSeconds     int            `json:"cooldownSeconds"`
+	ActiveRequests      int            `json:"activeRequests"`
+	ConsecutiveFailures int            `json:"consecutiveFailures"`
+	CooldownUntil       *time.Time     `json:"cooldownUntil,omitempty"`
+	LastRuntimeError    string         `json:"lastRuntimeError"`
+	LastRuntimeAt       *time.Time     `json:"lastRuntimeAt,omitempty"`
+	LastLatencyMs       *int64         `json:"lastLatencyMs,omitempty"`
+	Models              []Model        `json:"models"`
+	apiKeyCiphertext    string
 }
 
 type Model struct {
@@ -107,16 +119,26 @@ type ResolvedModel struct {
 	Protocol       string
 	AdvancedConfig AdvancedConfig
 	UpstreamModel  string
+	Priority       int
+	Weight         int
+	MaxConcurrency int
+	TimeoutSeconds int
 }
 
 type ChannelInput struct {
-	Name           string         `json:"name"`
-	BaseURL        string         `json:"baseUrl"`
-	Protocol       string         `json:"protocol"`
-	APIKey         string         `json:"apiKey"`
-	ClearAPIKey    bool           `json:"clearApiKey"`
-	Enabled        bool           `json:"enabled"`
-	AdvancedConfig AdvancedConfig `json:"advancedConfig"`
+	Name             string         `json:"name"`
+	BaseURL          string         `json:"baseUrl"`
+	Protocol         string         `json:"protocol"`
+	APIKey           string         `json:"apiKey"`
+	ClearAPIKey      bool           `json:"clearApiKey"`
+	Enabled          bool           `json:"enabled"`
+	AdvancedConfig   AdvancedConfig `json:"advancedConfig"`
+	Priority         int            `json:"priority"`
+	Weight           int            `json:"weight"`
+	MaxConcurrency   int            `json:"maxConcurrency"`
+	TimeoutSeconds   int            `json:"timeoutSeconds"`
+	FailureThreshold int            `json:"failureThreshold"`
+	CooldownSeconds  int            `json:"cooldownSeconds"`
 }
 
 type ModelInput struct {

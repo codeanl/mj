@@ -75,7 +75,7 @@ func (service *Service) List(ctx context.Context, userID string, kind Kind, sour
 	if userID == "" || page < 1 || (pageSize != 8 && pageSize != 12) {
 		return Page{}, ErrInvalidAsset
 	}
-	if kind != "" && kind != KindImage && kind != KindVideo {
+	if kind != "" && kind != KindImage && kind != KindVideo && kind != KindAudio {
 		return Page{}, ErrInvalidAsset
 	}
 	if source != "" && source != SourceGenerated && source != SourceUploaded {
@@ -118,6 +118,11 @@ func ParseMediaType(mimeType string) (Kind, string, bool) {
 		"video/mp4":       {KindVideo, ".mp4"},
 		"video/webm":      {KindVideo, ".webm"},
 		"video/quicktime": {KindVideo, ".mov"},
+		"audio/mpeg":      {KindAudio, ".mp3"},
+		"audio/wav":       {KindAudio, ".wav"},
+		"audio/x-wav":     {KindAudio, ".wav"},
+		"audio/ogg":       {KindAudio, ".ogg"},
+		"audio/flac":      {KindAudio, ".flac"},
 	}
 	entry, ok := supported[mediaType]
 	if !ok {

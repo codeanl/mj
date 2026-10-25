@@ -1,6 +1,10 @@
 package generation
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
 
 func TestImageOptionsUseBackendDefaultsWhenOmitted(t *testing.T) {
 	defaults, ok := resolveImageOptions(CreateImageInput{}, "configured-image-model")
@@ -62,5 +66,32 @@ func TestNormalizeReferenceAssetIDsAllowsThreeUniqueImages(t *testing.T) {
 	}
 	if _, ok := normalizeReferenceAssetIDs([]string{"not-a-uuid"}); ok {
 		t.Fatal("expected invalid reference ID to be rejected")
+	}
+}
+
+func TestNormalizeVideoReferencesValidatesModesAndLimits(t *testing.T) {
+	if references, ok := normalizeVideoReferences(VideoModeText, nil); !ok || len(references) != 0 {
+		t.Fatalf("text mode should accept no references: %#v %v", references, ok)
+	}
+	first, last := uuid.NewString(), uuid.NewString()
+	frames := []VideoReference{{AssetID: first, Role: VideoRoleFirstFrame}, {AssetID: last, Role: VideoRoleLastFrame}}
+	if normalized, ok := normalizeVideoReferences(VideoModeFrames, frames); !ok || len(normalized) != 2 {
+		t.Fatalf("frames should be valid: %#v %v", normalized, ok)
+	}
+	if _, ok := normalizeVideoReferences(VideoModeFrames, append(frames, VideoReference{AssetID: uuid.NewString(), Role: VideoRoleImage})); ok {
+		t.Fatal("frames mode must reject reference media")
+	}
+	full := make([]VideoReference, 0, 12)
+	for index := 0; index < 9; index++ {
+		full = append(full, VideoReference{AssetID: uuid.NewString(), Role: VideoRoleImage})
+	}
+	for index := 0; index < 3; index++ {
+		full = append(full, VideoReference{AssetID: uuid.NewString(), Role: VideoRoleVideo})
+	}
+	if normalized, ok := normalizeVideoReferences(VideoModeReference, full); !ok || len(normalized) != 12 {
+		t.Fatalf("full reference should accept 12 valid media items: %#v %v", normalized, ok)
+	}
+	if _, ok := normalizeVideoReferences(VideoModeReference, []VideoReference{{AssetID: uuid.NewString(), Role: VideoRoleAudio}}); ok {
+		t.Fatal("audio-only reference must be rejected")
 	}
 }

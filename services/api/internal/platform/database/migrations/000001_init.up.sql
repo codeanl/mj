@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS media_assets (
     duration_seconds numeric,
     error_message text,
     created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT media_assets_kind_check CHECK (kind IN ('image', 'video')),
+    CONSTRAINT media_assets_kind_check CHECK (kind IN ('image', 'video', 'audio')),
     CONSTRAINT media_assets_source_check CHECK (source IN ('generated', 'uploaded')),
     CONSTRAINT media_assets_status_check CHECK (status IN ('generating', 'ready', 'failed')),
     CONSTRAINT media_assets_size_check CHECK (size_bytes >= 0),
@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS media_assets (
 
 ALTER TABLE media_assets
     ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'uploaded' CHECK (source IN ('generated', 'uploaded'));
+ALTER TABLE media_assets DROP CONSTRAINT IF EXISTS media_assets_kind_check;
+ALTER TABLE media_assets ADD CONSTRAINT media_assets_kind_check CHECK (kind IN ('image', 'video', 'audio'));
 
 ALTER TABLE media_assets
     ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'ready' CHECK (status IN ('generating', 'ready', 'failed'));
@@ -101,13 +103,13 @@ CREATE TABLE IF NOT EXISTS points_settings (
     default_model_cost numeric(18,2) NOT NULL DEFAULT 1,
     image_quality_multipliers jsonb NOT NULL DEFAULT '{"1K":1,"2K":2}'::jsonb,
     video_quality_multipliers jsonb NOT NULL DEFAULT '{"480":1,"720":1.5,"1080":2}'::jsonb,
-    video_seconds_multipliers jsonb NOT NULL DEFAULT '{"5":1,"10":2}'::jsonb,
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT points_settings_singleton CHECK (id = 1),
     CONSTRAINT points_settings_values CHECK (initial_points >= 0 AND default_model_cost >= 0)
 );
 
 INSERT INTO points_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+ALTER TABLE points_settings DROP COLUMN IF EXISTS video_seconds_multipliers;
 
 CREATE TABLE IF NOT EXISTS model_point_rules (
     model_id text PRIMARY KEY,
@@ -138,8 +140,13 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_cost numeric(18,2) 
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_transaction_id uuid REFERENCES point_transactions(id) ON DELETE SET NULL;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_refunded boolean NOT NULL DEFAULT false;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS retry_count integer NOT NULL DEFAULT 0;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_task_id text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_query_path text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS review_reason text;
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_status_check;
-ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_status_check CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled'));
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_status_check CHECK (status IN ('queued', 'running', 'needs_review', 'succeeded', 'failed', 'cancelled'));
+ALTER TABLE media_assets DROP CONSTRAINT IF EXISTS media_assets_status_check;
+ALTER TABLE media_assets ADD CONSTRAINT media_assets_status_check CHECK (status IN ('generating', 'needs_review', 'ready', 'failed'));
 
 CREATE TABLE IF NOT EXISTS model_channels (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -154,7 +161,7 @@ CREATE TABLE IF NOT EXISTS model_channels (
     last_tested_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'custom', 'compatible')),
+    CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'compshare-minimax-h3', 'custom', 'compatible')),
     CONSTRAINT model_channels_test_status_check CHECK (last_test_status IN ('untested', 'success', 'failed'))
 );
 
@@ -180,7 +187,7 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS channel_id uuid REFERENCES
 
 ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS advanced_config jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE model_channels DROP CONSTRAINT IF EXISTS model_channels_protocol_check;
-ALTER TABLE model_channels ADD CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'custom', 'compatible'));
+ALTER TABLE model_channels ADD CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'compshare-minimax-h3', 'custom', 'compatible'));
 ALTER TABLE channel_models DROP CONSTRAINT IF EXISTS channel_models_capability_check;
 ALTER TABLE channel_models ADD CONSTRAINT channel_models_capability_check CHECK (capability IN ('text', 'image', 'video', 'audio'));
 DROP INDEX IF EXISTS channel_models_model_id_unique_lower;
@@ -188,6 +195,43 @@ CREATE UNIQUE INDEX IF NOT EXISTS channel_models_channel_model_unique_lower ON c
 
 CREATE INDEX IF NOT EXISTS generation_tasks_status_created_idx ON generation_tasks (status, created_at ASC);
 CREATE INDEX IF NOT EXISTS generation_tasks_user_created_idx ON generation_tasks (user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS generation_attempts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id uuid NOT NULL REFERENCES generation_tasks(id) ON DELETE CASCADE,
+    attempt_no integer NOT NULL,
+    channel_id uuid REFERENCES model_channels(id) ON DELETE SET NULL,
+    protocol text NOT NULL DEFAULT '',
+    request_path text NOT NULL DEFAULT '',
+    status text NOT NULL,
+    http_status integer,
+    duration_ms bigint,
+    error_message text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    completed_at timestamptz,
+    UNIQUE (task_id, attempt_no),
+    CONSTRAINT generation_attempts_status_check CHECK (status IN ('running', 'pending', 'succeeded', 'failed', 'unknown'))
+);
+ALTER TABLE generation_attempts DROP CONSTRAINT IF EXISTS generation_attempts_status_check;
+ALTER TABLE generation_attempts ADD CONSTRAINT generation_attempts_status_check CHECK (status IN ('running', 'pending', 'succeeded', 'failed', 'unknown'));
+
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 100;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS weight integer NOT NULL DEFAULT 100;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS max_concurrency integer NOT NULL DEFAULT 4;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS request_timeout_seconds integer NOT NULL DEFAULT 300;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS failure_threshold integer NOT NULL DEFAULT 3;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS cooldown_seconds integer NOT NULL DEFAULT 60;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS active_requests integer NOT NULL DEFAULT 0;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS consecutive_failures integer NOT NULL DEFAULT 0;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS cooldown_until timestamptz;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS last_runtime_error text NOT NULL DEFAULT '';
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS last_runtime_at timestamptz;
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS last_latency_ms bigint;
+ALTER TABLE model_channels DROP CONSTRAINT IF EXISTS model_channels_protocol_check;
+ALTER TABLE model_channels ADD CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'compshare-minimax-h3', 'custom', 'compatible'));
+ALTER TABLE generation_attempts ADD COLUMN IF NOT EXISTS concurrency_at_start integer NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS generation_attempts_task_created_idx ON generation_attempts (task_id, attempt_no);
+UPDATE model_channels SET active_requests = 0 WHERE active_requests <> 0;
 
 CREATE INDEX IF NOT EXISTS media_assets_user_created_idx ON media_assets (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS media_assets_user_kind_created_idx ON media_assets (user_id, kind, created_at DESC);

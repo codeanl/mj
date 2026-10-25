@@ -348,6 +348,7 @@ else if (config.value) {
             (model.displayName);
             __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
             (model.modelId);
+            (model.capability === "video" ? "每秒积分" : "每次积分");
             let __VLS_50;
             /** @ts-ignore @type { | typeof __VLS_components.ElInputNumber} */
             ElInputNumber;
@@ -466,13 +467,13 @@ else if (config.value) {
     // @ts-ignore
     const __VLS_70 = __VLS_asFunctionalComponent1(__VLS_69, new __VLS_69({
         // @ts-ignore
-        ...{ 'onChange': {} }, title: "视频清晰度", values: (config.value.settings.videoQualityMultipliers), labels: ({ '480': '480p', '720': '720p', '1080': '1080p' }),
+        ...{ 'onChange': {} }, title: "视频清晰度", values: (config.value.settings.videoQualityMultipliers), labels: ({ '480P': '480P', '768P': '768P', '1080P': '1080P', '2K': '2K', '4K': '4K' }),
     }));
     const __VLS_71 = __VLS_70({
         ...{ 'onChange': {} },
         title: "视频清晰度",
         values: (config.value.settings.videoQualityMultipliers),
-        labels: ({ '480': '480p', '720': '720p', '1080': '1080p' }),
+        labels: ({ '480P': '480P', '768P': '768P', '1080P': '1080P', '2K': '2K', '4K': '4K' }),
     }, ...__VLS_functionalComponentArgsRest(__VLS_70));
     let __VLS_74;
     const __VLS_75 = {
@@ -482,30 +483,8 @@ else if (config.value) {
     void __VLS_75;
     var __VLS_72;
     var __VLS_73;
-    let __VLS_76;
-    /** @ts-ignore @type { | typeof __VLS_components.MultiplierPanel} */
-    MultiplierPanel;
-    // @ts-ignore
-    const __VLS_77 = __VLS_asFunctionalComponent1(__VLS_76, new __VLS_76({
-        // @ts-ignore
-        ...{ 'onChange': {} }, title: "视频秒数", values: (config.value.settings.videoSecondsMultipliers), labels: ({ '5': '5 秒', '10': '10 秒' }),
-    }));
-    const __VLS_78 = __VLS_77({
-        ...{ 'onChange': {} },
-        title: "视频秒数",
-        values: (config.value.settings.videoSecondsMultipliers),
-        labels: ({ '5': '5 秒', '10': '10 秒' }),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_77));
-    let __VLS_81;
-    const __VLS_82 = {
-        /** @type {typeof __VLS_81.change} */
-        onChange: ((key, value) => updateMultiplier('videoSecondsMultipliers', key, value)),
-    };
-    void __VLS_82;
-    var __VLS_79;
-    var __VLS_80;
 }
 // @ts-ignore
-[config, config, config, capabilities, activeCapability,];
+[config, config, capabilities, activeCapability,];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

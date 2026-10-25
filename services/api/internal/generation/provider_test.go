@@ -141,3 +141,30 @@ func TestProviderUsesProtocolSpecificJSONReferenceFields(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderKeepsAsyncTaskOnOriginalChannel(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"id":"upstream-42","status":"processing"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}]}`))
+	}))
+	defer server.Close()
+	provider := NewOpenAIImageProvider(time.Second, 1024*1024)
+	selected := modelchannels.ResolvedModel{BaseURL: server.URL, APIKey: "key", Protocol: "openai", UpstreamModel: "image-model", AdvancedConfig: modelchannels.AdvancedConfig{OperationConfigs: map[string]modelchannels.OperationConfig{"image": {CreatePath: "/images/generations", QueryPath: "/images/tasks/:task_id"}}}}
+	created, err := provider.Generate(context.Background(), Task{Prompt: "test", providerSize: "1024x1024", providerQuality: "high"}, selected, nil)
+	if err != nil || !created.Pending || created.UpstreamTaskID != "upstream-42" {
+		t.Fatalf("create pending: %#v %v", created, err)
+	}
+	completed, err := provider.Query(context.Background(), Task{UpstreamTaskID: created.UpstreamTaskID, UpstreamQueryPath: created.QueryPath}, selected)
+	if err != nil || len(completed.Content) == 0 {
+		t.Fatalf("query: %#v %v", completed, err)
+	}
+	if len(requests) != 2 || requests[0] != "POST /images/generations" || requests[1] != "GET /images/tasks/upstream-42" {
+		t.Fatalf("unexpected requests: %#v", requests)
+	}
+}

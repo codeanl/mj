@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { useRouter } from "vue-router"
 import { useDebounceFn, useIntervalFn } from "@vueuse/core"
 import {
   ChevronLeft,
@@ -9,17 +10,21 @@ import {
   Image,
   Images,
   LoaderCircle,
+  Music,
   Play,
   Plus,
+	RotateCcw,
+	RefreshCcw,
   Search,
   Upload,
   Video,
-  X,
 } from "@lucide/vue"
 
 import * as assetApi from "@/services/assets"
+import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue"
 import { apiErrorMessage } from "@/services/http"
 import { notification } from "@/services/notifications"
+import { checkGenerationTask, retryGenerationTask } from "@/services/generation"
 import { useAuthStore } from "@/stores/auth"
 
 type AssetFilter = "all" | assetApi.AssetType
@@ -28,6 +33,7 @@ const filters: Array<{ value: AssetFilter; label: string; icon: typeof Images }>
   { value: "all", label: "全部", icon: Images },
   { value: "image", label: "图片", icon: Image },
   { value: "video", label: "视频", icon: Video },
+  { value: "audio", label: "音频", icon: Music },
 ]
 
 const assets = ref<assetApi.Asset[]>([])
@@ -35,15 +41,20 @@ const total = ref(0)
 const activeFilter = ref<AssetFilter>("all")
 const searchKeyword = ref("")
 const currentPage = ref(1)
-const pageSize = ref(8)
+const pageSize = ref(12)
 const loading = ref(false)
 const refreshing = ref(false)
 const uploading = ref(false)
+const retryingId = ref("")
 const fileInput = ref<HTMLInputElement | null>(null)
 const previewUrls = ref<Record<string, string>>({})
 const previewSignatures = ref<Record<string, string>>({})
 const selectedAsset = ref<assetApi.Asset | null>(null)
+const selectedAssetUrl = ref("")
+let selectedAssetObjectUrl = ""
 const authStore = useAuthStore()
+const router = useRouter()
+const sameParametersStorageKey = "nova.same-generation-parameters"
 let loadSequence = 0
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
@@ -69,6 +80,7 @@ watch(searchKeyword, () => searchAssets())
 watch(hasGeneratingAssets, (hasGenerating) => (hasGenerating ? resumeRefresh() : pauseRefresh()), { immediate: true })
 onBeforeUnmount(() => {
   pauseRefresh()
+  closeAsset()
   revokePreviewUrls()
 })
 
@@ -92,7 +104,7 @@ async function loadAssets(options: { silent?: boolean } = {}) {
       currentPage.value = totalPages.value
       return
     }
-    await loadPreviewUrls(result.items, sequence)
+    void loadPreviewUrls(result.items, sequence)
   } catch (error) {
     if (sequence === loadSequence) notification.error(apiErrorMessage(error, "素材加载失败"))
   } finally {
@@ -114,7 +126,14 @@ async function loadPreviewUrls(items: assetApi.Asset[], sequence: number) {
         if (existingUrls[asset.id] && existingSignatures[asset.id] === signature) {
           return { id: asset.id, url: existingUrls[asset.id], signature, created: false }
         }
-        const blob = await assetApi.getAssetContent(asset.url)
+        const previewURL = asset.type === "image" ? `${asset.url}${asset.url.includes("?") ? "&" : "?"}thumbnail=1` : asset.url
+        let blob: Blob
+        try {
+          blob = await assetApi.getAssetContent(previewURL)
+        } catch {
+          if (asset.type !== "image") throw new Error("preview unavailable")
+          blob = await assetApi.getAssetContent(asset.url)
+        }
         return { id: asset.id, url: URL.createObjectURL(blob), signature, created: true }
       } catch {
         return { id: asset.id, url: "", signature: "", created: false }
@@ -170,13 +189,62 @@ async function handleFileSelection(event: Event) {
   }
 }
 
-function openAsset(asset: assetApi.Asset) {
+async function openAsset(asset: assetApi.Asset) {
   if (asset.status !== "ready") return
   if (!previewUrls.value[asset.id]) {
     notification.warning("素材预览暂不可用")
     return
   }
+  closeAsset()
   selectedAsset.value = asset
+  selectedAssetUrl.value = previewUrls.value[asset.id]
+  if (asset.type !== "image") return
+  try {
+    const original = await assetApi.getAssetContent(asset.url)
+    const objectUrl = URL.createObjectURL(original)
+    if (selectedAsset.value?.id !== asset.id) {
+      URL.revokeObjectURL(objectUrl)
+      return
+    }
+    selectedAssetObjectUrl = objectUrl
+    selectedAssetUrl.value = objectUrl
+  } catch {
+    // Keep the thumbnail visible when the original is temporarily unavailable.
+  }
+}
+
+function closeAsset() {
+  if (selectedAssetObjectUrl) URL.revokeObjectURL(selectedAssetObjectUrl)
+  selectedAssetObjectUrl = ""
+  selectedAssetUrl.value = ""
+  selectedAsset.value = null
+}
+
+function useSameParameters(asset: assetApi.Asset) {
+  if (!asset.generation || (asset.type !== "image" && asset.type !== "video")) return
+  sessionStorage.setItem(sameParametersStorageKey, JSON.stringify(asset))
+  closeAsset()
+  void router.push("/")
+}
+
+async function retryAsset(asset: assetApi.Asset) {
+	if (!asset.generationTaskId || retryingId.value) return
+	retryingId.value = asset.id
+	try { const result = await retryGenerationTask(asset.generationTaskId); if (result.pointsRemaining !== undefined) authStore.setPointsBalance(result.pointsRemaining); await loadAssets({silent:true}); notification.success("失败任务已重新排队") }
+	catch(error){ notification.error(apiErrorMessage(error,"任务重试失败")) }
+	finally{ retryingId.value="" }
+}
+
+async function checkAsset(asset: assetApi.Asset) {
+	if (!asset.generationTaskId || retryingId.value) return
+	retryingId.value = asset.id
+	try {
+		const task = await checkGenerationTask(asset.generationTaskId)
+		if (task.pointsRemaining !== undefined) authStore.setPointsBalance(task.pointsRemaining)
+		await loadAssets({ silent: true })
+		notification.info(task.status === "succeeded" ? "任务已完成" : "上游仍在处理中，请稍后再次检查")
+	} catch (error) { notification.error(apiErrorMessage(error, "状态检查失败")) }
+	finally { retryingId.value = "" }
 }
 
 async function downloadAsset(asset: assetApi.Asset) {
@@ -225,6 +293,7 @@ function sourceLabel(source: assetApi.AssetSource) {
 function statusLabel(status: assetApi.AssetStatus) {
   if (status === "generating") return "生成中"
   if (status === "failed") return "生成失败"
+	if (status === "needs_review") return "等待确认"
   return "已完成"
 }
 </script>
@@ -235,14 +304,14 @@ function statusLabel(status: assetApi.AssetStatus) {
       <div>
         <p>NOVA ASSETS</p>
         <h1>我的素材</h1>
-        <span>统一管理创作过程中生成和上传的图片、视频。</span>
+        <span>统一管理创作过程中生成和上传的图片、视频和音频。</span>
       </div>
       <button class="assets-upload" type="button" :disabled="uploading" @click="chooseAsset">
         <LoaderCircle v-if="uploading" class="spin" :size="17" />
         <Plus v-else :size="17" />
         <span>{{ uploading ? "上传中" : "上传素材" }}</span>
       </button>
-      <input ref="fileInput" class="asset-file-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" @change="handleFileSelection" />
+      <input ref="fileInput" class="asset-file-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/flac" @change="handleFileSelection" />
     </header>
 
     <div class="assets-toolbar">
@@ -267,11 +336,13 @@ function statusLabel(status: assetApi.AssetStatus) {
       <article v-for="asset in assets" :key="asset.id" class="asset-card" :class="`asset-card--${asset.status}`">
         <button class="asset-card__preview" type="button" :disabled="asset.status !== 'ready'" @click="openAsset(asset)">
           <img v-if="asset.status === 'ready' && previewUrls[asset.id] && asset.type === 'image'" :src="previewUrls[asset.id]" :alt="asset.title" />
-          <video v-else-if="asset.status === 'ready' && previewUrls[asset.id]" :src="previewUrls[asset.id]" muted preload="metadata" />
-          <span v-else-if="asset.status === 'generating'" class="asset-card__generation-state"><LoaderCircle class="spin" :size="25" /><strong>图片生成中</strong><small>任务完成后自动更新</small></span>
+		  <video v-else-if="asset.status === 'ready' && previewUrls[asset.id] && asset.type === 'video'" :src="previewUrls[asset.id]" muted preload="metadata" />
+		  <span v-else-if="asset.status === 'ready' && previewUrls[asset.id]" class="asset-card__audio"><Music :size="30" /><strong>{{ asset.title }}</strong></span>
+		  <span v-else-if="asset.status === 'generating'" class="asset-card__generation-state"><LoaderCircle class="spin" :size="25" /><strong>图片生成中</strong><small>任务完成后自动更新</small></span>
+		  <span v-else-if="asset.status === 'needs_review'" class="asset-card__generation-state asset-card__generation-state--failed"><CircleAlert :size="25" /><strong>等待确认</strong><small>{{ asset.errorMessage || "请检查上游状态" }}</small></span>
           <span v-else-if="asset.status === 'failed'" class="asset-card__generation-state asset-card__generation-state--failed" :title="asset.errorMessage"><CircleAlert :size="25" /><strong>生成失败</strong><small>{{ asset.errorMessage || "请稍后重试" }}</small></span>
-          <span v-else class="asset-card__media-loading"><Image v-if="asset.type === 'image'" :size="24" /><Video v-else :size="24" /></span>
-          <span class="asset-card__type"><Image v-if="asset.type === 'image'" :size="13" /><Video v-else :size="13" />{{ asset.type === "image" ? "图片" : "视频" }}</span>
+		  <span v-else class="asset-card__media-loading"><Image v-if="asset.type === 'image'" :size="24" /><Video v-else-if="asset.type === 'video'" :size="24" /><Music v-else :size="24" /></span>
+		  <span class="asset-card__type"><Image v-if="asset.type === 'image'" :size="13" /><Video v-else-if="asset.type === 'video'" :size="13" /><Music v-else :size="13" />{{ asset.type === "image" ? "图片" : asset.type === "video" ? "视频" : "音频" }}</span>
           <span v-if="asset.type === 'video' && asset.status === 'ready'" class="asset-card__play"><Play :size="18" fill="currentColor" /></span>
           <span v-if="formatDuration(asset.durationSeconds)" class="asset-card__duration">{{ formatDuration(asset.durationSeconds) }}</span>
         </button>
@@ -280,7 +351,7 @@ function statusLabel(status: assetApi.AssetStatus) {
             <strong>{{ asset.title }}</strong>
             <span class="asset-card__details"><em :class="`is-${asset.source}`">{{ sourceLabel(asset.source) }}</em><i :class="`is-${asset.status}`">{{ statusLabel(asset.status) }}</i>{{ formatDimensions(asset) }} · {{ formatDate(asset.createdAt) }}</span>
           </div>
-          <button type="button" :aria-label="`下载 ${asset.title}`" :disabled="asset.status !== 'ready'" @click="downloadAsset(asset)"><Download :size="16" /></button>
+		  <button v-if="asset.status === 'failed' && asset.generationTaskId" type="button" aria-label="重试失败任务" :disabled="retryingId === asset.id" @click="retryAsset(asset)"><LoaderCircle v-if="retryingId === asset.id" class="spin" :size="16" /><RotateCcw v-else :size="16" /></button><button v-else-if="asset.status === 'needs_review' && asset.generationTaskId" type="button" aria-label="检查任务状态" :disabled="retryingId === asset.id" @click="checkAsset(asset)"><LoaderCircle v-if="retryingId === asset.id" class="spin" :size="16" /><RefreshCcw v-else :size="16" /></button><button v-else type="button" :aria-label="`下载 ${asset.title}`" :disabled="asset.status !== 'ready'" @click="downloadAsset(asset)"><Download :size="16" /></button>
         </div>
       </article>
     </div>
@@ -303,13 +374,6 @@ function statusLabel(status: assetApi.AssetStatus) {
       </label>
     </footer>
 
-    <div v-if="selectedAsset" class="asset-preview-dialog" role="dialog" aria-modal="true" :aria-label="selectedAsset.title" @click.self="selectedAsset = null">
-      <div class="asset-preview-dialog__body">
-        <button type="button" aria-label="关闭预览" @click="selectedAsset = null"><X :size="19" /></button>
-        <img v-if="selectedAsset.type === 'image'" :src="previewUrls[selectedAsset.id]" :alt="selectedAsset.title" />
-        <video v-else :src="previewUrls[selectedAsset.id]" controls />
-        <div><strong>{{ selectedAsset.title }}</strong><span>{{ formatBytes(selectedAsset.sizeBytes) }} · {{ formatDate(selectedAsset.createdAt) }}</span></div>
-      </div>
-    </div>
+    <AssetPreviewDialog v-if="selectedAsset && selectedAssetUrl" :asset="selectedAsset" :media-url="selectedAssetUrl" @close="closeAsset" @recreate="useSameParameters" />
   </section>
 </template>

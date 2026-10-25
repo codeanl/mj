@@ -32,7 +32,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 	}
 	assetService := assets.NewService(assets.NewPostgresRepository(db), assetStorage)
 	assetHTTP := newAssetHandlers(assetService, logger, cfg.AssetMaxBytes)
-	adminGenerationHTTP := newAdminGenerationHandlers(admingenerations.NewService(admingenerations.NewRepository(db)), assetService, logger)
+	adminGenerationService := admingenerations.NewService(admingenerations.NewRepository(db))
 	channelRepository := modelchannels.NewRepository(db)
 	channelService := modelchannels.NewService(channelRepository, modelchannels.NewSecretCipher(cfg.JWTSecret), cfg.GenerationTimeout)
 	if db != nil {
@@ -45,10 +45,13 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 	pointHTTP := newPointHandlers(pointService, logger)
 	generationRepository := generation.NewRepository(db)
 	imageProvider := generation.NewOpenAIImageProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
+	videoProvider := generation.NewMiniMaxH3VideoProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
+	recoveryService := generation.NewRecoveryService(generationRepository, imageProvider, videoProvider, channelService, assetStorage)
+	adminGenerationHTTP := newAdminGenerationHandlers(adminGenerationService, assetService, recoveryService, logger)
 	generationService := generation.NewService(generationRepository, channelService, pointService)
-	generationHTTP := newGenerationHandlers(generationService, logger)
+	generationHTTP := newGenerationHandlers(generationService, adminGenerationService, recoveryService, logger)
 	if db != nil {
-		go generation.NewWorker(generationRepository, imageProvider, channelService, assetStorage, logger, cfg.WorkerInterval, cfg.TaskStale).Run(runtimeContext)
+		go generation.NewWorker(generationRepository, imageProvider, videoProvider, channelService, assetStorage, logger, cfg.WorkerInterval, cfg.TaskStale).Run(runtimeContext)
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -85,7 +88,10 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Get("/points", pointHTTP.Wallet)
 			protected.Get("/generations/capabilities", generationHTTP.GetCapabilities)
 			protected.Post("/generations/images", generationHTTP.CreateImage)
+			protected.Post("/generations/videos", generationHTTP.CreateVideo)
 			protected.Get("/generations/{id}", generationHTTP.GetTask)
+			protected.Post("/generations/{id}/retry", generationHTTP.Retry)
+			protected.Post("/generations/{id}/check", generationHTTP.Check)
 
 			protected.Group(func(admin chi.Router) {
 				admin.Use(authHTTP.RequireAdmin)
@@ -101,9 +107,13 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 				admin.Post("/admin/generations/{taskId}/retry", adminGenerationHTTP.Retry)
 				admin.Post("/admin/generations/{taskId}/cancel", adminGenerationHTTP.Cancel)
 				admin.Post("/admin/generations/{taskId}/refund", adminGenerationHTTP.Refund)
+				admin.Post("/admin/generations/{taskId}/check", adminGenerationHTTP.Check)
+				admin.Post("/admin/generations/{taskId}/review", adminGenerationHTTP.Review)
 				admin.Get("/admin/points/rules", pointHTTP.GetRules)
 				admin.Put("/admin/points/rules", pointHTTP.SaveRules)
 				admin.Get("/admin/channels", channelHTTP.List)
+				admin.Get("/admin/channels/simulate", channelHTTP.Simulate)
+				admin.Get("/admin/channels/stats", channelHTTP.Stats)
 				admin.Post("/admin/channels", channelHTTP.Create)
 				admin.Patch("/admin/channels/{channelId}", channelHTTP.Update)
 				admin.Delete("/admin/channels/{channelId}", channelHTTP.Delete)

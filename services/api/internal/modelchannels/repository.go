@@ -29,7 +29,9 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 func (repository *Repository) List(ctx context.Context) ([]Channel, error) {
 	rows, err := repository.pool.Query(ctx, `
 		SELECT id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
-		       last_test_status, last_test_message, last_tested_at, created_at, updated_at
+		       last_test_status, last_test_message, last_tested_at, created_at, updated_at,
+		       priority, weight, max_concurrency, request_timeout_seconds, failure_threshold, cooldown_seconds,
+		       active_requests, consecutive_failures, cooldown_until, last_runtime_error, last_runtime_at, last_latency_ms
 		FROM model_channels
 		ORDER BY created_at ASC, id ASC
 	`)
@@ -68,7 +70,9 @@ func (repository *Repository) List(ctx context.Context) ([]Channel, error) {
 func (repository *Repository) Find(ctx context.Context, id string) (Channel, error) {
 	channel, err := scanChannel(repository.pool.QueryRow(ctx, `
 		SELECT id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
-		       last_test_status, last_test_message, last_tested_at, created_at, updated_at
+		       last_test_status, last_test_message, last_tested_at, created_at, updated_at,
+		       priority, weight, max_concurrency, request_timeout_seconds, failure_threshold, cooldown_seconds,
+		       active_requests, consecutive_failures, cooldown_until, last_runtime_error, last_runtime_at, last_latency_ms
 		FROM model_channels WHERE id = $1
 	`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -88,11 +92,13 @@ func (repository *Repository) Create(ctx context.Context, input ChannelInput, en
 		return Channel{}, err
 	}
 	channel, err := scanChannel(repository.pool.QueryRow(ctx, `
-		INSERT INTO model_channels (id, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+		INSERT INTO model_channels (id, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled, priority, weight, max_concurrency, request_timeout_seconds, failure_threshold, cooldown_seconds)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
-		          last_test_status, last_test_message, last_tested_at, created_at, updated_at
-	`, id, input.Name, input.BaseURL, input.Protocol, advanced, encryptedKey, input.Enabled))
+		          last_test_status, last_test_message, last_tested_at, created_at, updated_at,
+		          priority, weight, max_concurrency, request_timeout_seconds, failure_threshold, cooldown_seconds,
+		          active_requests, consecutive_failures, cooldown_until, last_runtime_error, last_runtime_at, last_latency_ms
+	`, id, input.Name, input.BaseURL, input.Protocol, advanced, encryptedKey, input.Enabled, input.Priority, input.Weight, input.MaxConcurrency, input.TimeoutSeconds, input.FailureThreshold, input.CooldownSeconds))
 	if err != nil {
 		return Channel{}, err
 	}
@@ -109,11 +115,14 @@ func (repository *Repository) Update(ctx context.Context, id string, input Chann
 		UPDATE model_channels
 		SET name = $2, base_url = $3, protocol = $4, advanced_config = $5::jsonb,
 		    api_key_ciphertext = CASE WHEN $6::boolean THEN $7 ELSE api_key_ciphertext END,
-		    enabled = $8, updated_at = now()
+		    enabled = $8, priority = $9, weight = $10, max_concurrency = $11, request_timeout_seconds = $12,
+		    failure_threshold = $13, cooldown_seconds = $14, updated_at = now()
 		WHERE id = $1
 		RETURNING id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
-		          last_test_status, last_test_message, last_tested_at, created_at, updated_at
-	`, id, input.Name, input.BaseURL, input.Protocol, advanced, encryptedKey != nil, stringValue(encryptedKey), input.Enabled)
+		          last_test_status, last_test_message, last_tested_at, created_at, updated_at,
+		          priority, weight, max_concurrency, request_timeout_seconds, failure_threshold, cooldown_seconds,
+		          active_requests, consecutive_failures, cooldown_until, last_runtime_error, last_runtime_at, last_latency_ms
+	`, id, input.Name, input.BaseURL, input.Protocol, advanced, encryptedKey != nil, stringValue(encryptedKey), input.Enabled, input.Priority, input.Weight, input.MaxConcurrency, input.TimeoutSeconds, input.FailureThreshold, input.CooldownSeconds)
 	channel, err := scanChannel(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Channel{}, ErrChannelNotFound
@@ -149,6 +158,11 @@ func (repository *Repository) SaveTestResult(ctx context.Context, id, status, me
 		return ErrChannelNotFound
 	}
 	return nil
+}
+
+func (repository *Repository) SaveHealthCheck(ctx context.Context, id string, success bool, latencyMS int64, message string) error {
+	_, err := repository.pool.Exec(ctx, `UPDATE model_channels SET last_runtime_at=now(),last_latency_ms=$3,last_runtime_error=CASE WHEN $2 THEN '' ELSE left($4,500) END,consecutive_failures=CASE WHEN $2 THEN 0 ELSE consecutive_failures+1 END,cooldown_until=CASE WHEN $2 THEN NULL ELSE cooldown_until END WHERE id=$1`, id, success, latencyMS, message)
+	return err
 }
 
 func (repository *Repository) CreateModel(ctx context.Context, channelID string, input ModelInput) (Model, error) {
@@ -234,22 +248,87 @@ func (repository *Repository) ListPublicModels(ctx context.Context, capability s
 }
 
 func (repository *Repository) ResolveImageModel(ctx context.Context, channelID, modelID string) (Channel, Model, error) {
+	return repository.ResolveModel(ctx, "image", channelID, modelID)
+}
+
+func (repository *Repository) ResolveModel(ctx context.Context, capability, channelID, modelID string) (Channel, Model, error) {
 	row := repository.pool.QueryRow(ctx, `
 		SELECT channel.id::text, channel.name, channel.base_url, channel.protocol, channel.advanced_config, channel.api_key_ciphertext, channel.enabled,
 		       channel.last_test_status, channel.last_test_message, channel.last_tested_at, channel.created_at, channel.updated_at,
+		       channel.priority, channel.weight, channel.max_concurrency, channel.request_timeout_seconds, channel.failure_threshold, channel.cooldown_seconds,
+		       channel.active_requests, channel.consecutive_failures, channel.cooldown_until, channel.last_runtime_error, channel.last_runtime_at, channel.last_latency_ms,
 		       model.id::text, model.channel_id::text, model.model_id, model.display_name, model.capability, model.enabled, model.sort_order, model.created_at, model.updated_at
 		FROM channel_models model
 		JOIN model_channels channel ON channel.id = model.channel_id
 		WHERE lower(model.model_id) = lower($1)
 		  AND ($2 = '' OR channel.id = NULLIF($2, '')::uuid)
-		  AND channel.enabled = true AND model.enabled = true AND model.capability = 'image'
+		  AND channel.enabled = true AND model.enabled = true AND model.capability = $3
 		LIMIT 1
-	`, modelID, channelID)
+	`, modelID, channelID, capability)
 	channel, model, err := scanResolvedModel(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Channel{}, Model{}, ErrModelNotFound
 	}
 	return channel, model, err
+}
+
+func (repository *Repository) ResolveImageModels(ctx context.Context, modelID string) ([]struct {
+	Channel Channel
+	Model   Model
+}, error) {
+	return repository.ResolveModels(ctx, "image", modelID)
+}
+
+func (repository *Repository) ResolveModels(ctx context.Context, capability, modelID string) ([]struct {
+	Channel Channel
+	Model   Model
+}, error) {
+	rows, err := repository.pool.Query(ctx, `
+		SELECT channel.id::text, channel.name, channel.base_url, channel.protocol, channel.advanced_config, channel.api_key_ciphertext, channel.enabled,
+		       channel.last_test_status, channel.last_test_message, channel.last_tested_at, channel.created_at, channel.updated_at,
+		       channel.priority, channel.weight, channel.max_concurrency, channel.request_timeout_seconds, channel.failure_threshold, channel.cooldown_seconds,
+		       channel.active_requests, channel.consecutive_failures, channel.cooldown_until, channel.last_runtime_error, channel.last_runtime_at, channel.last_latency_ms,
+		       model.id::text, model.channel_id::text, model.model_id, model.display_name, model.capability, model.enabled, model.sort_order, model.created_at, model.updated_at
+		FROM channel_models model JOIN model_channels channel ON channel.id = model.channel_id
+		WHERE lower(model.model_id) = lower($1) AND channel.enabled AND model.enabled AND model.capability = $2
+		  AND (channel.cooldown_until IS NULL OR channel.cooldown_until <= now())
+		ORDER BY channel.priority ASC, channel.created_at ASC
+	`, modelID, capability)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]struct {
+		Channel Channel
+		Model   Model
+	}, 0)
+	for rows.Next() {
+		channel, model, err := scanResolvedModel(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, struct {
+			Channel Channel
+			Model   Model
+		}{channel, model})
+	}
+	return result, rows.Err()
+}
+
+func (repository *Repository) TryAcquire(ctx context.Context, channelID string) (bool, error) {
+	result, err := repository.pool.Exec(ctx, `UPDATE model_channels SET active_requests = active_requests + 1 WHERE id = $1 AND enabled AND active_requests < max_concurrency AND (cooldown_until IS NULL OR cooldown_until <= now())`, channelID)
+	return err == nil && result.RowsAffected() == 1, err
+}
+
+func (repository *Repository) Release(ctx context.Context, channelID string, success bool, latencyMS int64, message string) error {
+	_, err := repository.pool.Exec(ctx, `
+		UPDATE model_channels SET active_requests = greatest(active_requests - 1, 0), last_runtime_at = now(), last_latency_ms = $3,
+		consecutive_failures = CASE WHEN $2 THEN 0 ELSE consecutive_failures + 1 END,
+		last_runtime_error = CASE WHEN $2 THEN '' ELSE left($4, 500) END,
+		cooldown_until = CASE WHEN $2 THEN NULL WHEN consecutive_failures + 1 >= failure_threshold THEN now() + make_interval(secs => cooldown_seconds) ELSE cooldown_until END
+		WHERE id = $1
+	`, channelID, success, latencyMS, message)
+	return err
 }
 
 func scanResolvedModel(row rowScanner) (Channel, Model, error) {
@@ -259,6 +338,8 @@ func scanResolvedModel(row rowScanner) (Channel, Model, error) {
 	err := row.Scan(
 		&channel.ID, &channel.Name, &channel.BaseURL, &channel.Protocol, &advanced, &channel.apiKeyCiphertext, &channel.Enabled,
 		&channel.LastTestStatus, &channel.LastTestMessage, &channel.LastTestedAt, &channel.CreatedAt, &channel.UpdatedAt,
+		&channel.Priority, &channel.Weight, &channel.MaxConcurrency, &channel.TimeoutSeconds, &channel.FailureThreshold, &channel.CooldownSeconds,
+		&channel.ActiveRequests, &channel.ConsecutiveFailures, &channel.CooldownUntil, &channel.LastRuntimeError, &channel.LastRuntimeAt, &channel.LastLatencyMs,
 		&model.ID, &model.ChannelID, &model.ModelID, &model.DisplayName, &model.Capability, &model.Enabled, &model.SortOrder, &model.CreatedAt, &model.UpdatedAt,
 	)
 	if err == nil {
@@ -299,6 +380,8 @@ func scanChannel(row rowScanner) (Channel, error) {
 	err := row.Scan(
 		&channel.ID, &channel.Name, &channel.BaseURL, &channel.Protocol, &advanced, &channel.apiKeyCiphertext, &channel.Enabled,
 		&channel.LastTestStatus, &channel.LastTestMessage, &channel.LastTestedAt, &channel.CreatedAt, &channel.UpdatedAt,
+		&channel.Priority, &channel.Weight, &channel.MaxConcurrency, &channel.TimeoutSeconds, &channel.FailureThreshold, &channel.CooldownSeconds,
+		&channel.ActiveRequests, &channel.ConsecutiveFailures, &channel.CooldownUntil, &channel.LastRuntimeError, &channel.LastRuntimeAt, &channel.LastLatencyMs,
 	)
 	if err == nil {
 		err = json.Unmarshal(advanced, &channel.AdvancedConfig)

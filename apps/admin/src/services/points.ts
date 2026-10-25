@@ -7,7 +7,6 @@ export type PointSettings = {
   defaultModelCost: number
   imageQualityMultipliers: Record<string, number>
   videoQualityMultipliers: Record<string, number>
-  videoSecondsMultipliers: Record<string, number>
   updatedAt: string
 }
 

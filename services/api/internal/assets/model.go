@@ -7,32 +7,70 @@ type Source string
 type Status string
 
 const (
-	KindImage        Kind   = "image"
-	KindVideo        Kind   = "video"
-	SourceGenerated  Source = "generated"
-	SourceUploaded   Source = "uploaded"
-	StatusGenerating Status = "generating"
-	StatusReady      Status = "ready"
-	StatusFailed     Status = "failed"
+	KindImage         Kind   = "image"
+	KindVideo         Kind   = "video"
+	KindAudio         Kind   = "audio"
+	SourceGenerated   Source = "generated"
+	SourceUploaded    Source = "uploaded"
+	StatusGenerating  Status = "generating"
+	StatusReady       Status = "ready"
+	StatusFailed      Status = "failed"
+	StatusNeedsReview Status = "needs_review"
 )
 
 type Asset struct {
-	ID              string    `json:"id"`
-	Kind            Kind      `json:"type"`
-	Source          Source    `json:"source"`
-	Status          Status    `json:"status"`
-	Title           string    `json:"title"`
-	URL             string    `json:"url"`
-	DownloadURL     string    `json:"downloadUrl"`
-	SizeBytes       int64     `json:"sizeBytes"`
-	Width           int       `json:"width"`
-	Height          int       `json:"height"`
-	DurationSeconds *float64  `json:"durationSeconds,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	ErrorMessage    string    `json:"errorMessage,omitempty"`
-	OriginalName    string    `json:"-"`
-	MimeType        string    `json:"-"`
-	storageKey      string
+	ID               string              `json:"id"`
+	Kind             Kind                `json:"type"`
+	Source           Source              `json:"source"`
+	Status           Status              `json:"status"`
+	Title            string              `json:"title"`
+	URL              string              `json:"url"`
+	DownloadURL      string              `json:"downloadUrl"`
+	SizeBytes        int64               `json:"sizeBytes"`
+	Width            int                 `json:"width"`
+	Height           int                 `json:"height"`
+	DurationSeconds  *float64            `json:"durationSeconds,omitempty"`
+	CreatedAt        time.Time           `json:"createdAt"`
+	ErrorMessage     string              `json:"errorMessage,omitempty"`
+	GenerationTaskID string              `json:"generationTaskId,omitempty"`
+	Generation       *GenerationMetadata `json:"generation,omitempty"`
+	OriginalName     string              `json:"originalName,omitempty"`
+	MimeType         string              `json:"mimeType,omitempty"`
+	storageKey       string
+}
+
+type GenerationMetadata struct {
+	TaskID                   string                `json:"taskId"`
+	Status                   string                `json:"status"`
+	Provider                 string                `json:"provider"`
+	Model                    string                `json:"model"`
+	Prompt                   string                `json:"prompt"`
+	Ratio                    string                `json:"ratio"`
+	Quality                  string                `json:"quality"`
+	RequestedDurationSeconds int                   `json:"requestedDurationSeconds,omitempty"`
+	SoundEnabled             bool                  `json:"soundEnabled"`
+	WatermarkEnabled         bool                  `json:"watermarkEnabled"`
+	VideoMode                string                `json:"videoMode,omitempty"`
+	ReferenceCount           int                   `json:"referenceCount"`
+	PointsCost               float64               `json:"pointsCost"`
+	RetryCount               int                   `json:"retryCount"`
+	ChannelName              string                `json:"channelName,omitempty"`
+	Protocol                 string                `json:"protocol,omitempty"`
+	UpstreamTaskID           string                `json:"upstreamTaskId,omitempty"`
+	CreatedAt                time.Time             `json:"createdAt"`
+	StartedAt                *time.Time            `json:"startedAt,omitempty"`
+	CompletedAt              *time.Time            `json:"completedAt,omitempty"`
+	ExecutionDurationMS      *int64                `json:"executionDurationMs,omitempty"`
+	References               []GenerationReference `json:"references,omitempty"`
+	referenceJSON            []byte
+}
+
+type GenerationReference struct {
+	AssetID string `json:"assetId"`
+	Type    Kind   `json:"type"`
+	Role    string `json:"role"`
+	Title   string `json:"title"`
+	URL     string `json:"url"`
 }
 
 type Page struct {

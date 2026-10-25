@@ -7,7 +7,6 @@ type Settings struct {
 	DefaultModelCost        float64            `json:"defaultModelCost"`
 	ImageQualityMultipliers map[string]float64 `json:"imageQualityMultipliers"`
 	VideoQualityMultipliers map[string]float64 `json:"videoQualityMultipliers"`
-	VideoSecondsMultipliers map[string]float64 `json:"videoSecondsMultipliers"`
 	UpdatedAt               time.Time          `json:"updatedAt"`
 }
 

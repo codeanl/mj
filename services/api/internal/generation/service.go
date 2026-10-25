@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -17,6 +18,7 @@ var ErrUnsupportedOptions = errors.New("unsupported generation options")
 var ErrInsufficientPoints = errors.New("insufficient points")
 var ErrInvalidImageCount = errors.New("invalid image count")
 var ErrInvalidReference = errors.New("invalid reference image")
+var ErrInvalidVideoReference = errors.New("invalid video reference")
 
 type Service struct {
 	repository *Repository
@@ -58,6 +60,108 @@ func (service *Service) CreateImage(ctx context.Context, input CreateImageInput)
 		return ImageBatch{}, err
 	}
 	return service.repository.CreateImages(ctx, input.UserID, prompt, options, count, referenceAssetIDs, cost)
+}
+
+func (service *Service) CreateVideo(ctx context.Context, input CreateVideoInput) (VideoBatch, error) {
+	prompt := strings.TrimSpace(input.Prompt)
+	mode := strings.TrimSpace(input.Mode)
+	if mode == "" {
+		mode = VideoModeText
+	}
+	references, ok := normalizeVideoReferences(mode, input.References)
+	if !ok {
+		return VideoBatch{}, ErrInvalidVideoReference
+	}
+	promptLength := utf8.RuneCountInString(prompt)
+	if input.UserID == "" || promptLength > 7000 || (mode == VideoModeText && promptLength < 2) {
+		return VideoBatch{}, ErrInvalidPrompt
+	}
+	models, err := service.channels.PublicModels(ctx, "video")
+	if err != nil {
+		return VideoBatch{}, err
+	}
+	found := false
+	for _, model := range models {
+		if strings.EqualFold(model.ID, input.Model) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return VideoBatch{}, ErrProviderUnavailable
+	}
+	ratio := strings.TrimSpace(input.Size)
+	if ratio == "" {
+		ratio = "16:9"
+	}
+	resolution := strings.ToUpper(strings.TrimSpace(input.Quality))
+	if resolution == "" {
+		resolution = "768P"
+	}
+	seconds := input.DurationSeconds
+	if seconds == 0 {
+		seconds = 5
+	}
+	validRatio := map[string]bool{"21:9": true, "16:9": true, "4:3": true, "1:1": true, "3:4": true, "9:16": true, "adaptive": true}
+	validQuality := map[string]bool{"480P": true, "768P": true, "1080P": true, "2K": true, "4K": true}
+	if !validRatio[ratio] || !validQuality[resolution] || seconds < 4 || seconds > 30 {
+		return VideoBatch{}, ErrUnsupportedOptions
+	}
+	candidates, err := service.channels.ResolveCandidates(ctx, "video", input.Model)
+	if err != nil || len(candidates) == 0 {
+		return VideoBatch{}, ErrProviderUnavailable
+	}
+	cost, err := service.points.VideoGenerationCost(ctx, input.Model, resolution, seconds)
+	if err != nil {
+		return VideoBatch{}, err
+	}
+	task, remaining, err := service.repository.CreateVideo(ctx, input.UserID, prompt, VideoOptions{ChannelID: candidates[0].ChannelID, Model: input.Model, Ratio: ratio, Resolution: resolution, DurationSeconds: seconds, SoundEnabled: input.SoundEnabled, WatermarkEnabled: input.WatermarkEnabled, Width: 0, Height: 0, Mode: mode}, references, cost)
+	if err != nil {
+		return VideoBatch{}, err
+	}
+	return VideoBatch{Tasks: []Task{task}, PointsRemaining: remaining}, nil
+}
+
+func normalizeVideoReferences(mode string, values []VideoReference) ([]VideoReference, bool) {
+	if mode == VideoModeText {
+		return nil, len(values) == 0
+	}
+	if mode != VideoModeFrames && mode != VideoModeReference {
+		return nil, false
+	}
+	maximum := 12
+	if mode == VideoModeFrames {
+		maximum = 2
+	}
+	if len(values) < 1 || len(values) > maximum {
+		return nil, false
+	}
+	result := make([]VideoReference, 0, len(values))
+	seenIDs := make(map[string]struct{}, len(values))
+	seenRoles := make(map[string]int)
+	for _, value := range values {
+		value.AssetID = strings.TrimSpace(value.AssetID)
+		value.Role = strings.TrimSpace(value.Role)
+		if _, err := uuid.Parse(value.AssetID); err != nil {
+			return nil, false
+		}
+		if _, exists := seenIDs[value.AssetID]; exists {
+			return nil, false
+		}
+		if mode == VideoModeFrames && value.Role != VideoRoleFirstFrame && value.Role != VideoRoleLastFrame {
+			return nil, false
+		}
+		if mode == VideoModeReference && value.Role != VideoRoleImage && value.Role != VideoRoleVideo && value.Role != VideoRoleAudio {
+			return nil, false
+		}
+		seenIDs[value.AssetID] = struct{}{}
+		seenRoles[value.Role]++
+		result = append(result, value)
+	}
+	if mode == VideoModeFrames {
+		return result, seenRoles[VideoRoleFirstFrame] <= 1 && seenRoles[VideoRoleLastFrame] <= 1
+	}
+	return result, seenRoles[VideoRoleImage] <= 9 && seenRoles[VideoRoleVideo] <= 3 && seenRoles[VideoRoleAudio] <= 3 && seenRoles[VideoRoleAudio] < len(result)
 }
 
 func normalizeReferenceAssetIDs(values []string) ([]string, bool) {
@@ -143,6 +247,19 @@ func (service *Service) Capabilities(ctx context.Context) (Capabilities, error) 
 	for _, model := range publicModels {
 		models = append(models, Option{Value: model.ID, Label: model.DisplayName})
 	}
+	videoModelsRaw, err := service.channels.PublicModels(ctx, "video")
+	if err != nil {
+		return Capabilities{}, err
+	}
+	videoModels := make([]Option, 0, len(videoModelsRaw))
+	for _, model := range videoModelsRaw {
+		videoModels = append(videoModels, Option{Value: model.ID, Label: model.DisplayName})
+	}
+	videoDurations := make([]Option, 0, 27)
+	for seconds := 4; seconds <= 30; seconds++ {
+		value := strconv.Itoa(seconds)
+		videoDurations = append(videoDurations, Option{Value: value, Label: value + "秒"})
+	}
 	return Capabilities{
 		Image: GenerationCapability{
 			Enabled: len(models) > 0,
@@ -156,7 +273,7 @@ func (service *Service) Capabilities(ctx context.Context) (Capabilities, error) 
 			},
 			Qualities: []Option{{Value: "1K", Label: "1K"}, {Value: "2K", Label: "2K"}},
 		},
-		Video: GenerationCapability{Enabled: false, Models: []Option{}, Sizes: []ImageSizeOption{}, Qualities: []Option{}},
+		Video: GenerationCapability{Enabled: len(videoModels) > 0, Models: videoModels, Sizes: []ImageSizeOption{{Value: "adaptive", Label: "自适应"}, {Value: "21:9", Label: "21:9"}, {Value: "16:9", Label: "16:9"}, {Value: "4:3", Label: "4:3"}, {Value: "1:1", Label: "1:1"}, {Value: "3:4", Label: "3:4"}, {Value: "9:16", Label: "9:16"}}, Qualities: []Option{{Value: "480P", Label: "480P"}, {Value: "768P", Label: "768P"}, {Value: "1080P", Label: "1080P"}, {Value: "2K", Label: "2K"}, {Value: "4K", Label: "4K"}}, Durations: videoDurations},
 	}, nil
 }
 

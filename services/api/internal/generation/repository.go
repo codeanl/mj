@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -101,7 +103,8 @@ func (repository *Repository) CreateImages(ctx context.Context, userID, prompt s
 			RETURNING id::text, asset_id::text, user_id::text, channel_id::text, kind, status, model, prompt,
 			          parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
 			          parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality',
-			          coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded, created_at
+			          coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
+			          coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),created_at
 		`, taskID, userID, assetID, options.ChannelID, options.Model, prompt, parameters, pointsCost, pointsTransactionID)
 
 		var task Task
@@ -117,12 +120,80 @@ func (repository *Repository) CreateImages(ctx context.Context, userID, prompt s
 	return ImageBatch{Tasks: tasks, PointsRemaining: pointsRemaining}, nil
 }
 
+func (repository *Repository) CreateVideo(ctx context.Context, userID, prompt string, options VideoOptions, references []VideoReference, pointsCost float64) (Task, float64, error) {
+	taskID, assetID := uuid.NewString(), uuid.NewString()
+	referenceAssetIDs := make([]string, 0, len(references))
+	for _, reference := range references {
+		referenceAssetIDs = append(referenceAssetIDs, reference.AssetID)
+	}
+	parameters, err := json.Marshal(map[string]interface{}{"size": options.Ratio, "quality": options.Resolution, "durationSeconds": options.DurationSeconds, "soundEnabled": options.SoundEnabled, "watermarkEnabled": options.WatermarkEnabled, "width": options.Width, "height": options.Height, "videoMode": options.Mode, "videoReferences": references, "referenceAssetIds": referenceAssetIDs})
+	if err != nil {
+		return Task{}, 0, err
+	}
+	tx, err := repository.pool.Begin(ctx)
+	if err != nil {
+		return Task{}, 0, err
+	}
+	defer tx.Rollback(ctx)
+	for _, reference := range references {
+		var kind, mimeType, storageKey string
+		if err := tx.QueryRow(ctx, `SELECT kind,mime_type,coalesce(storage_key,'') FROM media_assets WHERE id=$1 AND user_id=$2 AND status='ready'`, reference.AssetID, userID).Scan(&kind, &mimeType, &storageKey); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Task{}, 0, ErrInvalidVideoReference
+			}
+			return Task{}, 0, err
+		}
+		valid := storageKey != "" && strings.HasPrefix(mimeType, kind+"/")
+		if options.Mode == VideoModeFrames {
+			valid = valid && kind == "image" && (reference.Role == VideoRoleFirstFrame || reference.Role == VideoRoleLastFrame)
+		} else {
+			expectedRoles := map[string]string{"image": VideoRoleImage, "video": VideoRoleVideo, "audio": VideoRoleAudio}
+			valid = valid && options.Mode == VideoModeReference && expectedRoles[kind] == reference.Role
+		}
+		if !valid {
+			return Task{}, 0, ErrInvalidVideoReference
+		}
+	}
+	var remaining float64
+	if err := tx.QueryRow(ctx, `UPDATE users SET points_balance=points_balance-$2::numeric,updated_at=now() WHERE id=$1 AND status='active' AND points_balance >= $2::numeric RETURNING points_balance`, userID, pointsCost).Scan(&remaining); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, 0, ErrInsufficientPoints
+		}
+		return Task{}, 0, err
+	}
+	transactionID := ""
+	if pointsCost > 0 {
+		transactionID = uuid.NewString()
+		if _, err = tx.Exec(ctx, `INSERT INTO point_transactions(id,user_id,type,amount,balance_after,description,model,source_id,idempotency_key)VALUES($1,$2,'consume',$3::numeric,$4::numeric,'视频生成',$5,$6,$7)`, transactionID, userID, -pointsCost, remaining, options.Model, taskID, "generation-consume:"+taskID); err != nil {
+			return Task{}, 0, err
+		}
+	}
+	title := truncateRunes(prompt, 80)
+	if title == "" && options.Mode == VideoModeFrames {
+		title = "首尾帧视频"
+	} else if title == "" {
+		title = "全能参考视频"
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO media_assets(id,user_id,kind,source,status,title,size_bytes,width,height)VALUES($1,$2,'video','generated','generating',$3,0,0,0)`, assetID, userID, title); err != nil {
+		return Task{}, 0, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO generation_tasks(id,user_id,asset_id,channel_id,kind,status,provider,model,prompt,parameters,points_cost,points_transaction_id)VALUES($1,$2,$3,$4,'video','queued','compshare-minimax-h3',$5,$6,$7::jsonb,$8::numeric,NULLIF($9,'')::uuid)`, taskID, userID, assetID, options.ChannelID, options.Model, prompt, parameters, pointsCost, transactionID); err != nil {
+		return Task{}, 0, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Task{}, 0, err
+	}
+	task, err := repository.Get(ctx, userID, taskID)
+	task.PointsRemaining = remaining
+	return task, remaining, err
+}
+
 func (repository *Repository) Get(ctx context.Context, userID, taskID string) (Task, error) {
 	row := repository.pool.QueryRow(ctx, `
-		SELECT id::text, asset_id::text, user_id::text, channel_id::text, kind, status, model, prompt,
-		       parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
-		       parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality', coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
-		       coalesce(error_message, ''), created_at
+		SELECT id::text, asset_id::text, user_id::text, coalesce(channel_id::text, ''), kind, status, model, prompt,
+		       coalesce(parameters->>'size',''), coalesce((parameters->>'width')::integer,0), coalesce((parameters->>'height')::integer,0),
+		       coalesce(parameters->>'quality',''), coalesce(parameters->>'providerSize',''), coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false), coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
+		       coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),coalesce(error_message, ''), created_at
 		FROM generation_tasks
 		WHERE id = $1 AND user_id = $2
 	`, taskID, userID)
@@ -154,8 +225,9 @@ func (repository *Repository) ClaimNext(ctx context.Context) (Task, bool, error)
 
 	row := tx.QueryRow(ctx, `
 		SELECT id::text, asset_id::text, user_id::text, channel_id::text, kind, status, model, prompt,
-		       parameters->>'size', (parameters->>'width')::integer, (parameters->>'height')::integer,
-		       parameters->>'quality', parameters->>'providerSize', parameters->>'providerQuality', coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded, created_at
+		       coalesce(parameters->>'size',''), coalesce((parameters->>'width')::integer,0), coalesce((parameters->>'height')::integer,0),
+		       coalesce(parameters->>'quality',''), coalesce(parameters->>'providerSize',''), coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false), coalesce(parameters->'referenceAssetIds', '[]'::jsonb), points_cost, coalesce(points_transaction_id::text, ''), points_refunded,
+		       coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),created_at
 		FROM generation_tasks
 		WHERE status = 'queued'
 		ORDER BY created_at ASC
@@ -179,12 +251,36 @@ func (repository *Repository) ClaimNext(ctx context.Context) (Task, bool, error)
 	return task, true, nil
 }
 
+func (repository *Repository) StartAttempt(ctx context.Context, taskID, channelID, protocol, path string) (string, int, error) {
+	id := uuid.NewString()
+	var attemptNo int
+	err := repository.pool.QueryRow(ctx, `INSERT INTO generation_attempts (id,task_id,attempt_no,channel_id,protocol,request_path,status,concurrency_at_start) SELECT $1,$2,coalesce(max(a.attempt_no),0)+1,NULLIF($3,'')::uuid,$4,$5,'running',coalesce((SELECT active_requests FROM model_channels WHERE id=NULLIF($3,'')::uuid),0) FROM generation_attempts a WHERE a.task_id=$2 RETURNING attempt_no`, id, taskID, channelID, protocol, path).Scan(&attemptNo)
+	return id, attemptNo, err
+}
+
+func (repository *Repository) FinishAttempt(ctx context.Context, id, status string, httpStatus *int, durationMS int64, message string) error {
+	_, err := repository.pool.Exec(ctx, `UPDATE generation_attempts SET status=$2,http_status=$3,duration_ms=$4,error_message=left($5,500),completed_at=now() WHERE id=$1`, id, status, httpStatus, durationMS, sanitizeExecutionError(message))
+	return err
+}
+
+var secretTokenPattern = regexp.MustCompile(`(?i)(bearer\s+|api[_-]?key["'=:\s]+|sk-)[A-Za-z0-9._~+/=-]{6,}`)
+
+func sanitizeExecutionError(value string) string {
+	return strings.TrimSpace(secretTokenPattern.ReplaceAllString(value, "$1[REDACTED]"))
+}
+
+func (repository *Repository) SetChannel(ctx context.Context, taskID, channelID string) error {
+	_, err := repository.pool.Exec(ctx, `UPDATE generation_tasks SET channel_id=$2 WHERE id=$1`, taskID, channelID)
+	return err
+}
+
 func scanTask(row rowScanner, task *Task, withError bool) error {
 	var referenceAssetIDs []byte
 	values := []interface{}{
 		&task.ID, &task.AssetID, &task.userID, &task.ChannelID, &task.Kind, &task.Status, &task.Model, &task.Prompt,
-		&task.Size, &task.Width, &task.Height, &task.Quality, &task.providerSize, &task.providerQuality,
+		&task.Size, &task.Width, &task.Height, &task.Quality, &task.providerSize, &task.providerQuality, &task.DurationSeconds, &task.SoundEnabled, &task.WatermarkEnabled,
 		&referenceAssetIDs, &task.PointsCost, &task.pointsTransactionID, &task.pointsRefunded,
+		&task.UpstreamTaskID, &task.UpstreamQueryPath, &task.ReviewReason,
 	}
 	if withError {
 		values = append(values, &task.ErrorMessage)
@@ -196,18 +292,77 @@ func scanTask(row rowScanner, task *Task, withError bool) error {
 	return json.Unmarshal(referenceAssetIDs, &task.ReferenceAssetIDs)
 }
 
+func (repository *Repository) GetByID(ctx context.Context, taskID string) (Task, error) {
+	row := repository.pool.QueryRow(ctx, `SELECT id::text,asset_id::text,user_id::text,coalesce(channel_id::text,''),kind,status,model,prompt,coalesce(parameters->>'size',''),coalesce((parameters->>'width')::integer,0),coalesce((parameters->>'height')::integer,0),coalesce(parameters->>'quality',''),coalesce(parameters->>'providerSize',''),coalesce(parameters->>'providerQuality',''),coalesce((parameters->>'durationSeconds')::integer,0),coalesce((parameters->>'soundEnabled')::boolean,false),coalesce((parameters->>'watermarkEnabled')::boolean,false),coalesce(parameters->'referenceAssetIds','[]'::jsonb),points_cost,coalesce(points_transaction_id::text,''),points_refunded,coalesce(upstream_task_id,''),coalesce(upstream_query_path,''),coalesce(review_reason,''),coalesce(error_message,''),created_at FROM generation_tasks WHERE id=$1`, taskID)
+	var task Task
+	if err := scanTask(row, &task, true); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrTaskNotFound
+		}
+		return Task{}, err
+	}
+	return task, nil
+}
+
+func (repository *Repository) MarkNeedsReview(ctx context.Context, task Task, upstreamID, queryPath, reason string) error {
+	tx, err := repository.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `UPDATE media_assets SET status='needs_review',error_message=$2 WHERE id=$1`, task.AssetID, reason); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE generation_tasks SET status='needs_review',upstream_task_id=$2,upstream_query_path=$3,review_reason=$4,error_message=$4 WHERE id=$1`, task.ID, upstreamID, queryPath, reason); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (repository *Repository) GetReferences(ctx context.Context, task Task) ([]storedReference, error) {
 	if len(task.ReferenceAssetIDs) == 0 || task.userID == "" {
 		return nil, ErrInvalidReference
+	}
+	if task.Kind == "video" {
+		rows, err := repository.pool.Query(ctx, `
+			SELECT coalesce(asset.storage_key,''),coalesce(asset.original_name,''),coalesce(asset.mime_type,''),asset.kind,item.value->>'role'
+			FROM generation_tasks task
+			CROSS JOIN LATERAL jsonb_array_elements(coalesce(task.parameters->'videoReferences','[]'::jsonb)) WITH ORDINALITY AS item(value,position)
+			JOIN media_assets asset ON asset.id=(item.value->>'assetId')::uuid AND asset.user_id=task.user_id AND asset.status='ready'
+			WHERE task.id=$1 AND task.user_id=$2
+			ORDER BY item.position
+		`, task.ID, task.userID)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		references := make([]storedReference, 0, len(task.ReferenceAssetIDs))
+		for rows.Next() {
+			var reference storedReference
+			if err := rows.Scan(&reference.StorageKey, &reference.OriginalName, &reference.MimeType, &reference.Kind, &reference.Role); err != nil {
+				return nil, err
+			}
+			if reference.StorageKey == "" {
+				return nil, ErrInvalidVideoReference
+			}
+			references = append(references, reference)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		if len(references) != len(task.ReferenceAssetIDs) {
+			return nil, ErrInvalidVideoReference
+		}
+		return references, nil
 	}
 	references := make([]storedReference, 0, len(task.ReferenceAssetIDs))
 	for _, referenceAssetID := range task.ReferenceAssetIDs {
 		var reference storedReference
 		err := repository.pool.QueryRow(ctx, `
-			SELECT coalesce(storage_key, ''), coalesce(original_name, ''), coalesce(mime_type, '')
+			SELECT coalesce(storage_key, ''), coalesce(original_name, ''), coalesce(mime_type, ''),kind
 			FROM media_assets
 			WHERE id = $1 AND user_id = $2 AND kind = 'image' AND status = 'ready'
-		`, referenceAssetID, task.userID).Scan(&reference.StorageKey, &reference.OriginalName, &reference.MimeType)
+		`, referenceAssetID, task.userID).Scan(&reference.StorageKey, &reference.OriginalName, &reference.MimeType, &reference.Kind)
 		if errors.Is(err, pgx.ErrNoRows) || reference.StorageKey == "" {
 			return nil, ErrInvalidReference
 		}
@@ -228,9 +383,9 @@ func (repository *Repository) Complete(ctx context.Context, task Task, asset Com
 	if _, err := tx.Exec(ctx, `
 		UPDATE media_assets
 		SET status = 'ready', storage_key = $2, original_name = $3, mime_type = $4,
-		    size_bytes = $5, width = $6, height = $7, error_message = NULL
+		    size_bytes = $5, width = $6, height = $7,duration_seconds=$8,error_message = NULL
 		WHERE id = $1
-	`, task.AssetID, asset.StorageKey, asset.OriginalName, asset.MimeType, asset.SizeBytes, asset.Width, asset.Height); err != nil {
+	`, task.AssetID, asset.StorageKey, asset.OriginalName, asset.MimeType, asset.SizeBytes, asset.Width, asset.Height, asset.DurationSeconds); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

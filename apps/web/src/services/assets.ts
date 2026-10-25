@@ -2,9 +2,34 @@ import axios from "axios"
 
 import { http, type ApiResponse } from "./http"
 
-export type AssetType = "image" | "video"
+export type AssetType = "image" | "video" | "audio"
 export type AssetSource = "generated" | "uploaded"
-export type AssetStatus = "generating" | "ready" | "failed"
+export type AssetStatus = "generating" | "needs_review" | "ready" | "failed"
+
+export type AssetGenerationMetadata = {
+  taskId: string
+  status: string
+  provider: string
+  model: string
+  prompt: string
+  ratio: string
+  quality: string
+  requestedDurationSeconds?: number
+  soundEnabled: boolean
+  watermarkEnabled: boolean
+  videoMode?: string
+  referenceCount: number
+  pointsCost: number
+  retryCount: number
+  channelName?: string
+  protocol?: string
+  upstreamTaskId?: string
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+  executionDurationMs?: number
+  references?: Array<{ assetId: string; type: AssetType; role: string; title: string; url: string }>
+}
 
 export type Asset = {
   id: string
@@ -12,6 +37,8 @@ export type Asset = {
   source: AssetSource
   status: AssetStatus
   title: string
+  originalName?: string
+  mimeType?: string
   url: string
   downloadUrl: string
   sizeBytes: number
@@ -20,6 +47,8 @@ export type Asset = {
   durationSeconds?: number
   createdAt: string
   errorMessage?: string
+	generationTaskId?: string
+  generation?: AssetGenerationMetadata
 }
 
 export type AssetPage = {

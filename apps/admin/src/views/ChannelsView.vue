@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue"
-import { ElButton, ElDialog, ElInput, ElMessage, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus"
+import { ElButton, ElDialog, ElInput, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus"
 import "element-plus/dist/index.css"
 import { ArrowLeft, Check, CheckCircle2, CircleAlert, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Search, Settings2, Trash2, XCircle } from "@lucide/vue"
 
@@ -14,16 +14,20 @@ const testingId = ref("")
 const syncingId = ref("")
 const query = ref("")
 const status = ref<"all" | "enabled" | "disabled">("all")
+const simulatorModel=ref("");const simulatorSize=ref("16:9");const simulatorQuality=ref("2K");const simulation=ref<channelApi.RouteSimulation|null>(null);const simulating=ref(false)
+const statsWindow=ref<"24h"|"7d">("24h");const runtimeStats=ref<channelApi.RuntimeStats|null>(null)
 const dialogOpen = ref(false)
 const onboardingStep = ref<0 | 1>(0)
 const editingId = ref("")
 const modelDialogOpen = ref(false)
 const editingModelId = ref("")
 
-const channelForm = reactive<channelApi.ChannelInput>({ name: "", baseUrl: "", protocol: "openai", apiKey: "", enabled: false, advancedConfig: emptyAdvancedConfig() })
+const routingDefaults = { priority: 100, weight: 100, maxConcurrency: 4, timeoutSeconds: 300, failureThreshold: 3, cooldownSeconds: 60 }
+const channelForm = reactive<channelApi.ChannelInput>({ name: "", baseUrl: "", protocol: "openai", apiKey: "", enabled: false, advancedConfig: emptyAdvancedConfig(), ...routingDefaults })
 const modelForm = reactive<channelApi.ModelInput>({ modelId: "", displayName: "", capability: "image", enabled: true, sortOrder: 0 })
 
 const editingChannel = computed(() => channels.value.find((channel) => channel.id === editingId.value))
+const imageModels=computed(()=>Array.from(new Set(channels.value.flatMap(channel=>channel.models.filter(model=>model.capability==="image"&&model.enabled).map(model=>model.modelId)))))
 const filteredChannels = computed(() => {
   const keyword = query.value.trim().toLowerCase()
   return channels.value.filter((channel) => {
@@ -40,7 +44,10 @@ const capabilityCounts = computed(() => Object.fromEntries(["text", "image", "vi
 const selectedProtocol = computed(() => protocols.value.find((protocol) => protocol.id === channelForm.protocol))
 const protocolLabels = computed(() => Object.fromEntries(protocols.value.map((protocol) => [protocol.id, protocol.label])) as Record<string, string>)
 
-onMounted(() => void Promise.all([loadChannels(), loadProtocols()]))
+onMounted(() => void Promise.all([loadChannels(), loadProtocols(),loadStats()]))
+
+async function runSimulation(){if(!simulatorModel.value)return ElMessage.warning("请选择图片模型");simulating.value=true;try{simulation.value=await channelApi.simulateRoute({model:simulatorModel.value,size:simulatorSize.value,quality:simulatorQuality.value})}catch(error){ElMessage.error(messageOf(error,"路由模拟失败"))}finally{simulating.value=false}}
+async function loadStats(){try{runtimeStats.value=await channelApi.getChannelStats(statsWindow.value)}catch(error){ElMessage.error(messageOf(error,"渠道统计加载失败"))}}
 
 async function loadProtocols() {
   try {
@@ -53,7 +60,8 @@ async function loadProtocols() {
 async function loadChannels() {
   loading.value = true
   try {
-    channels.value = await channelApi.listChannels()
+	channels.value = await channelApi.listChannels()
+	if (!imageModels.value.includes(simulatorModel.value)) simulatorModel.value=imageModels.value[0]||""
   } catch (error) {
     ElMessage.error(messageOf(error, "渠道加载失败"))
   } finally {
@@ -64,14 +72,14 @@ async function loadChannels() {
 function openCreate() {
   editingId.value = ""
   onboardingStep.value = 0
-  Object.assign(channelForm, { name: "", baseUrl: "", protocol: "openai", apiKey: "", enabled: false, advancedConfig: emptyAdvancedConfig() })
+  Object.assign(channelForm, { name: "", baseUrl: "", protocol: "openai", apiKey: "", enabled: false, advancedConfig: emptyAdvancedConfig(), ...routingDefaults })
   dialogOpen.value = true
 }
 
 function openEdit(channel: channelApi.ModelChannel) {
   editingId.value = channel.id
   onboardingStep.value = 1
-  Object.assign(channelForm, { name: channel.name, baseUrl: channel.baseUrl, protocol: channel.protocol, apiKey: "", enabled: channel.enabled, advancedConfig: cloneData(channel.advancedConfig) })
+  Object.assign(channelForm, { name: channel.name, baseUrl: channel.baseUrl, protocol: channel.protocol, apiKey: "", enabled: channel.enabled, advancedConfig: cloneData(channel.advancedConfig), priority: channel.priority, weight: channel.weight, maxConcurrency: channel.maxConcurrency, timeoutSeconds: channel.timeoutSeconds, failureThreshold: channel.failureThreshold, cooldownSeconds: channel.cooldownSeconds })
   dialogOpen.value = true
 }
 
@@ -108,7 +116,7 @@ async function saveChannel() {
 
 async function toggleChannel(channel: channelApi.ModelChannel, enabled: boolean) {
   try {
-    await channelApi.updateChannel(channel.id, { name: channel.name, baseUrl: channel.baseUrl, protocol: channel.protocol, enabled, advancedConfig: channel.advancedConfig })
+	await channelApi.updateChannel(channel.id, { name: channel.name, baseUrl: channel.baseUrl, protocol: channel.protocol, enabled, advancedConfig: channel.advancedConfig, priority: channel.priority, weight: channel.weight, maxConcurrency: channel.maxConcurrency, timeoutSeconds: channel.timeoutSeconds, failureThreshold: channel.failureThreshold, cooldownSeconds: channel.cooldownSeconds })
     await loadChannels()
     ElMessage.success(enabled ? "渠道已启用" : "渠道已停用")
   } catch (error) {
@@ -199,7 +207,9 @@ async function removeModel(model: channelApi.ChannelModel) {
 }
 
 function statusText(channel: channelApi.ModelChannel) {
-  if (!channel.enabled) return "已停用"
+	if (!channel.enabled) return "已停用"
+	if (channel.cooldownUntil && new Date(channel.cooldownUntil).getTime() > Date.now()) return "冷却中"
+	if (channel.consecutiveFailures > 0) return "运行异常"
   if (channel.lastTestStatus === "failed") return "连接异常"
   return "已启用"
 }
@@ -239,9 +249,15 @@ function messageOf(error: unknown, fallback: string) {
       <div><span>渠道模型</span><strong>{{ modelCount }}</strong></div>
       <div><span>可用模型</span><strong>{{ enabledModelCount }}</strong></div>
       <div><span>能力分布</span><strong class="channel-capability-metric">文 {{ capabilityCounts.text }} · 图 {{ capabilityCounts.image }} · 视 {{ capabilityCounts.video }} · 音 {{ capabilityCounts.audio }}</strong></div>
-    </div>
+	</div>
+	<div class="channel-observability">
+	  <section><div class="channel-observability__head"><div><strong>路由模拟器</strong><span>仅读取当前配置，不调用上游、不扣积分。</span></div><ElButton :loading="simulating" @click="runSimulation">模拟路由</ElButton></div><div class="channel-simulator-form"><ElSelect v-model="simulatorModel" placeholder="选择图片模型"><ElOption v-for="model in imageModels" :key="model" :label="model" :value="model" /></ElSelect><ElSelect v-model="simulatorSize"><ElOption label="1:1" value="1:1" /><ElOption label="16:9" value="16:9" /><ElOption label="9:16" value="9:16" /></ElSelect><ElSelect v-model="simulatorQuality"><ElOption label="1K" value="1K" /><ElOption label="2K" value="2K" /></ElSelect></div><div v-if="simulation" class="channel-route-list"><article v-for="(candidate,index) in simulation.candidates" :key="candidate.channelId" :class="{ 'is-selected': candidate.selected }"><b>{{ index+1 }}</b><span><strong>{{ candidate.channelName }}</strong><small>优先级 {{ candidate.priority }} · 权重 {{ candidate.weight }} · 并发 {{ candidate.activeRequests }}/{{ candidate.maxConcurrency }}</small></span><em>{{ candidate.selected ? '本次选择' : candidate.reason }}<small v-if="candidate.failoverTo">失败后 → {{ candidate.failoverTo }}</small></em></article></div>
+	  </section>
+	  <section><div class="channel-observability__head"><div><strong>渠道运行统计</strong><span>验证成功率、流量权重和自动切换。</span></div><div class="channel-window"><button :class="{active:statsWindow==='24h'}" @click="statsWindow='24h';loadStats()">24 小时</button><button :class="{active:statsWindow==='7d'}" @click="statsWindow='7d';loadStats()">7 天</button></div></div><div v-if="runtimeStats" class="channel-stats-summary"><div><span>请求数</span><strong>{{ runtimeStats.requests }}</strong></div><div><span>成功率</span><strong>{{ runtimeStats.successRate.toFixed(1) }}%</strong></div><div><span>平均耗时</span><strong>{{ Math.round(runtimeStats.averageLatencyMs) }} ms</strong></div><div><span>自动切换</span><strong>{{ runtimeStats.autoSwitches }}</strong></div><div><span>并发峰值</span><strong>{{ runtimeStats.peakConcurrency }}</strong></div></div><div v-if="runtimeStats?.routes.length" class="channel-traffic-list"><div v-for="route in runtimeStats.routes" :key="`${route.model}:${route.channelId}`"><span><strong>{{ route.channelName }}</strong><small>{{ route.model }} · {{ route.requests }} 次 · {{ Math.round(route.averageLatencyMs) }}ms</small></span><b>{{ route.trafficShare.toFixed(1) }}%</b></div></div><div v-if="runtimeStats && Object.keys(runtimeStats.httpErrors).length" class="channel-http-errors">HTTP 错误：<span v-for="(count,statusCode) in runtimeStats.httpErrors" :key="statusCode">{{ statusCode }} × {{ count }}</span></div>
+	  </section>
+	</div>
 
-    <div class="channel-toolbar">
+	<div class="channel-toolbar">
       <label class="channel-search"><Search :size="16" /><input v-model="query" placeholder="搜索渠道、地址或模型" /></label>
       <select v-model="status" aria-label="渠道状态筛选"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select>
       <button class="channel-primary" type="button" @click="openCreate"><Plus :size="16" />接入渠道</button>
@@ -256,8 +272,8 @@ function messageOf(error: unknown, fallback: string) {
             <td><button class="channel-name" type="button" @click="openEdit(channel)"><strong>{{ channel.name }}</strong><span><KeyRound :size="12" />{{ channel.apiKeyMasked || "未保存密钥" }}</span></button></td>
             <td><strong>{{ protocolLabels[channel.protocol] || channel.protocol }}</strong><span>{{ channel.baseUrl }}</span></td>
             <td><strong>{{ channel.models.filter((model) => model.enabled).length }} / {{ channel.models.length }}</strong><span>{{ channel.models.map((model) => `${capabilityLabel(model.capability)}·${model.displayName}`).join("、") || "尚未添加模型" }}</span></td>
-            <td><span class="channel-status" :class="{ 'is-enabled': channel.enabled, 'is-error': channel.lastTestStatus === 'failed' }">{{ statusText(channel) }}</span></td>
-            <td><span class="channel-test-result"><CheckCircle2 v-if="channel.lastTestStatus === 'success'" :size="14" /><XCircle v-else-if="channel.lastTestStatus === 'failed'" :size="14" /><CircleAlert v-else :size="14" />{{ channel.lastTestMessage || "尚未检测" }}</span></td>
+            <td><span class="channel-status" :class="{ 'is-enabled': channel.enabled && !channel.consecutiveFailures && !channel.cooldownUntil, 'is-error': channel.lastTestStatus === 'failed' || channel.consecutiveFailures > 0 }">{{ statusText(channel) }}</span></td>
+            <td><span class="channel-test-result"><CheckCircle2 v-if="channel.lastTestStatus === 'success'" :size="14" /><XCircle v-else-if="channel.lastTestStatus === 'failed'" :size="14" /><CircleAlert v-else :size="14" />{{ channel.lastRuntimeAt ? `${channel.lastLatencyMs ?? '-'} ms · ${channel.lastRuntimeError || '运行正常'}` : channel.lastTestMessage || "尚未检测" }}</span></td>
             <td><div class="channel-actions"><button type="button" title="测试连接" @click="testChannel(channel)"><LoaderCircle v-if="testingId === channel.id" class="spin" :size="15" /><CheckCircle2 v-else :size="15" /></button><button type="button" title="同步模型" @click="syncModels(channel)"><LoaderCircle v-if="syncingId === channel.id" class="spin" :size="15" /><RefreshCw v-else :size="15" /></button><button type="button" title="编辑渠道" @click="openEdit(channel)"><Pencil :size="15" /></button><ElSwitch :model-value="channel.enabled" @change="toggleChannel(channel, Boolean($event))" /></div></td>
           </tr>
         </tbody>
@@ -265,10 +281,10 @@ function messageOf(error: unknown, fallback: string) {
     </div>
     <div v-if="!loading && filteredChannels.length" class="channel-mobile-list">
       <article v-for="channel in filteredChannels" :key="channel.id">
-        <div class="channel-mobile-head"><button class="channel-name" type="button" @click="openEdit(channel)"><strong>{{ channel.name }}</strong><span><KeyRound :size="12" />{{ channel.apiKeyMasked || "未保存密钥" }}</span></button><span class="channel-status" :class="{ 'is-enabled': channel.enabled, 'is-error': channel.lastTestStatus === 'failed' }">{{ statusText(channel) }}</span></div>
+        <div class="channel-mobile-head"><button class="channel-name" type="button" @click="openEdit(channel)"><strong>{{ channel.name }}</strong><span><KeyRound :size="12" />{{ channel.apiKeyMasked || "未保存密钥" }}</span></button><span class="channel-status" :class="{ 'is-enabled': channel.enabled && !channel.consecutiveFailures && !channel.cooldownUntil, 'is-error': channel.lastTestStatus === 'failed' || channel.consecutiveFailures > 0 }">{{ statusText(channel) }}</span></div>
         <dl><div><dt>协议</dt><dd>{{ protocolLabels[channel.protocol] || channel.protocol }}</dd></div><div><dt>模型</dt><dd>{{ channel.models.filter((model) => model.enabled).length }} / {{ channel.models.length }}</dd></div></dl>
         <p>{{ channel.models.map((model) => `${capabilityLabel(model.capability)}·${model.displayName}`).join("、") || "尚未添加模型" }}</p>
-        <div class="channel-mobile-test"><CheckCircle2 v-if="channel.lastTestStatus === 'success'" :size="14" /><XCircle v-else-if="channel.lastTestStatus === 'failed'" :size="14" /><CircleAlert v-else :size="14" /><span>{{ channel.lastTestMessage || "尚未检测" }}</span></div>
+        <div class="channel-mobile-test"><CheckCircle2 v-if="channel.lastTestStatus === 'success'" :size="14" /><XCircle v-else-if="channel.lastTestStatus === 'failed'" :size="14" /><CircleAlert v-else :size="14" /><span>{{ channel.lastRuntimeAt ? `${channel.lastLatencyMs ?? '-'} ms · ${channel.lastRuntimeError || '运行正常'}` : channel.lastTestMessage || "尚未检测" }}</span></div>
         <div class="channel-mobile-actions"><button type="button" @click="testChannel(channel)"><LoaderCircle v-if="testingId === channel.id" class="spin" :size="15" /><CheckCircle2 v-else :size="15" />测试</button><button type="button" @click="syncModels(channel)"><LoaderCircle v-if="syncingId === channel.id" class="spin" :size="15" /><RefreshCw v-else :size="15" />同步</button><button type="button" @click="openEdit(channel)"><Pencil :size="15" />编辑</button><ElSwitch :model-value="channel.enabled" @change="toggleChannel(channel, Boolean($event))" /></div>
       </article>
     </div>
@@ -291,6 +307,12 @@ function messageOf(error: unknown, fallback: string) {
         <details class="channel-advanced channel-form-wide">
           <summary><Settings2 :size="15" />高级设置</summary>
           <div class="channel-advanced-grid">
+			<label><span>路由优先级</span><ElInputNumber v-model="channelForm.priority" :min="1" :max="10000" /></label>
+			<label><span>流量权重</span><ElInputNumber v-model="channelForm.weight" :min="1" :max="10000" /></label>
+			<label><span>最大并发</span><ElInputNumber v-model="channelForm.maxConcurrency" :min="1" :max="1000" /></label>
+			<label><span>请求超时（秒）</span><ElInputNumber v-model="channelForm.timeoutSeconds" :min="1" :max="3600" /></label>
+			<label><span>失败熔断阈值</span><ElInputNumber v-model="channelForm.failureThreshold" :min="1" :max="100" /></label>
+			<label><span>冷却时间（秒）</span><ElInputNumber v-model="channelForm.cooldownSeconds" :min="1" :max="86400" /></label>
             <label><span>API 格式</span><ElSelect v-model="channelForm.advancedConfig.apiFormat" :disabled="selectedProtocol?.strict"><ElOption label="OpenAI" value="openai" /><ElOption label="Gemini" value="gemini" /></ElSelect></label>
             <label><span>鉴权方式</span><ElSelect v-model="channelForm.advancedConfig.authMode" :disabled="selectedProtocol?.strict"><ElOption label="Bearer Token" value="bearer" /><ElOption label="x-api-key" value="x-api-key" /><ElOption label="自定义 Header" value="custom-header" /><ElOption label="无需鉴权" value="none" /></ElSelect></label>
             <label v-if="channelForm.advancedConfig.authMode === 'custom-header'"><span>鉴权 Header</span><ElInput v-model="channelForm.advancedConfig.authHeader" placeholder="x-api-key" /></label>

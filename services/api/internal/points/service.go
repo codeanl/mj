@@ -26,7 +26,7 @@ func (service *Service) GetConfig(ctx context.Context) (RuleConfig, error) {
 func (service *Service) SaveConfig(ctx context.Context, input RuleConfig) (RuleConfig, error) {
 	input.Settings.InitialPoints = normalize(input.Settings.InitialPoints)
 	input.Settings.DefaultModelCost = normalize(input.Settings.DefaultModelCost)
-	if !validValue(input.Settings.InitialPoints) || !validValue(input.Settings.DefaultModelCost) || !validMultipliers(input.Settings.ImageQualityMultipliers) || !validMultipliers(input.Settings.VideoQualityMultipliers) || !validMultipliers(input.Settings.VideoSecondsMultipliers) {
+	if !validValue(input.Settings.InitialPoints) || !validValue(input.Settings.DefaultModelCost) || !validMultipliers(input.Settings.ImageQualityMultipliers) || !validMultipliers(input.Settings.VideoQualityMultipliers) {
 		return RuleConfig{}, ErrInvalidInput
 	}
 	seen := make(map[string]struct{})
@@ -69,12 +69,30 @@ func (service *Service) GenerationCost(ctx context.Context, model, capability, p
 		if value, ok := config.Settings.VideoQualityMultipliers[parameter]; ok {
 			multiplier = value
 		}
-	} else if capability == "video-seconds" {
-		if value, ok := config.Settings.VideoSecondsMultipliers[parameter]; ok {
-			multiplier = value
-		}
 	}
 	return normalize(base * multiplier), nil
+}
+
+func (service *Service) VideoGenerationCost(ctx context.Context, model, quality string, seconds int) (float64, error) {
+	config, err := service.repository.GetConfig(ctx)
+	if err != nil {
+		return 0, err
+	}
+	base := config.Settings.DefaultModelCost
+	for _, rule := range config.Rules {
+		if strings.EqualFold(strings.TrimSpace(rule.ModelID), strings.TrimSpace(model)) {
+			base = rule.Cost
+			break
+		}
+	}
+	qualityMultiplier := config.Settings.VideoQualityMultipliers[quality]
+	if qualityMultiplier == 0 {
+		qualityMultiplier = config.Settings.VideoQualityMultipliers[strings.TrimSuffix(strings.ToUpper(quality), "P")]
+	}
+	if qualityMultiplier == 0 {
+		qualityMultiplier = 1
+	}
+	return normalize(base * float64(seconds) * qualityMultiplier), nil
 }
 
 func (service *Service) Balance(ctx context.Context, userID string) (float64, error) {
