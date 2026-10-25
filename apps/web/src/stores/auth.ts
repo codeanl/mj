@@ -2,6 +2,7 @@ import { defineStore } from "pinia"
 
 import * as authApi from "@/services/auth"
 import { ACCESS_TOKEN_KEY } from "@/services/http"
+import { getPointWallet } from "@/services/points"
 
 export const useAuthStore = defineStore("auth", {
   state: () => ({
@@ -39,6 +40,14 @@ export const useAuthStore = defineStore("auth", {
     logout() {
       this.clearSession()
     },
+    setPointsBalance(pointsBalance: number) {
+      if (this.user) this.user = { ...this.user, pointsBalance }
+    },
+    async refreshPointsBalance() {
+      if (!this.user) return
+      const wallet = await getPointWallet()
+      this.user = { ...this.user, pointsBalance: wallet.balance }
+    },
     applySession(result: authApi.AuthResult) {
       this.token = result.accessToken
       this.user = result.user
@@ -53,4 +62,3 @@ export const useAuthStore = defineStore("auth", {
     },
   },
 })
-

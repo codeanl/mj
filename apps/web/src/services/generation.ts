@@ -12,6 +12,8 @@ export type GenerationTask = {
   height: number
   quality: string
   errorMessage?: string
+  pointsCost: number
+  pointsRemaining: number
   createdAt: string
 }
 

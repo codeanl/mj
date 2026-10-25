@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router"
 import {
   Boxes,
   Clapperboard,
+  Coins,
   House,
   LogOut,
   Menu,
@@ -30,6 +31,10 @@ const isActive = (path: string) => (path === "/" ? route.path === "/" : route.pa
 async function logout() {
   authStore.logout()
   await router.replace("/login")
+}
+
+function formatPoints(value: number | undefined) {
+  return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: 2 })
 }
 </script>
 
@@ -67,6 +72,7 @@ async function logout() {
           <span class="profile-strip__copy">
             <strong>{{ authStore.user?.username }}</strong>
             <small>{{ authStore.user?.email }}</small>
+            <small class="profile-strip__points" title="积分余额"><Coins :size="12" />{{ formatPoints(authStore.user?.pointsBalance) }} 积分</small>
           </span>
           <button type="button" aria-label="退出登录" title="退出登录" @click="logout"><LogOut :size="16" /></button>
         </div>
@@ -90,6 +96,7 @@ async function logout() {
           <Clapperboard :size="17" />
           <span>{{ currentTitle }}</span>
         </div>
+        <span class="mobile-user-balance"><Coins :size="13" />{{ formatPoints(authStore.user?.pointsBalance) }}</span>
         <span class="profile-strip__avatar profile-strip__avatar--small">{{ authStore.userInitial }}</span>
       </header>
 

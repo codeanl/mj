@@ -1,6 +1,6 @@
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { Activity, Bell, Bot, Boxes, ChevronLeft, CircleDollarSign, ClipboardList, Database, FileClock, Gauge, Menu, LogOut, Search, Settings, ShieldCheck, UsersRound, X, } from "@lucide/vue";
+import { Bell, Bot, ChevronLeft, CircleDollarSign, Menu, LogOut, Search, ShieldCheck, UsersRound, X, } from "@lucide/vue";
 import BrandMark from "@/components/BrandMark.vue";
 import { useAdminAuthStore } from "@/stores/auth";
 const route = useRoute();
@@ -9,10 +9,9 @@ const auth = useAdminAuthStore();
 const mobileOpen = ref(false);
 const collapsed = ref(false);
 const groups = [
-    { title: "经营分析", items: [{ label: "经营概览", path: "/overview", icon: Gauge }, { label: "用户管理", path: "/users", icon: UsersRound }] },
-    { title: "AI 能力", items: [{ label: "模型渠道", path: "/channels", icon: Bot }, { label: "逻辑模型", path: "/models", icon: Database }, { label: "生成任务", path: "/generation", icon: Activity }] },
-    { title: "平台运营", items: [{ label: "媒体资产", path: "/assets", icon: Boxes }, { label: "计费中心", path: "/billing", icon: CircleDollarSign }, { label: "内容运营", path: "/content", icon: ClipboardList }] },
-    { title: "系统管理", items: [{ label: "审计日志", path: "/audit", icon: FileClock }, { label: "系统设置", path: "/settings", icon: Settings }] },
+    { title: "财务管理", items: [{ label: "积分规则", path: "/points", icon: CircleDollarSign }] },
+    { title: "上游配置", items: [{ label: "模型渠道", path: "/channels", icon: Bot }] },
+    { title: "系统管理", items: [{ label: "用户管理", path: "/users", icon: UsersRound }] },
 ];
 const title = computed(() => String(route.meta.title || "管理控制台"));
 const description = computed(() => String(route.meta.description || ""));

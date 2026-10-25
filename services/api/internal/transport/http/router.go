@@ -12,16 +12,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"nova-creator-platform/services/api/internal/adminusers"
 	"nova-creator-platform/services/api/internal/assets"
 	"nova-creator-platform/services/api/internal/auth"
 	"nova-creator-platform/services/api/internal/config"
 	"nova-creator-platform/services/api/internal/generation"
 	"nova-creator-platform/services/api/internal/modelchannels"
+	"nova-creator-platform/services/api/internal/points"
 )
 
 func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, redisClient *redis.Client) http.Handler {
 	authService := auth.NewService(auth.NewPostgresRepository(db), auth.NewTokenManager(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAccessTTL))
 	authHTTP := newAuthHandlers(authService, logger)
+	adminUserHTTP := newAdminUserHandlers(adminusers.NewService(adminusers.NewPostgresRepository(db)), logger)
 	assetStorage, err := assets.NewLocalStorage(cfg.AssetDataDir)
 	if err != nil {
 		panic(err)
@@ -35,9 +38,11 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 		}
 	}
 	channelHTTP := newModelChannelHandlers(channelService, logger)
+	pointService := points.NewService(points.NewPostgresRepository(db))
+	pointHTTP := newPointHandlers(pointService, logger)
 	generationRepository := generation.NewRepository(db)
 	imageProvider := generation.NewOpenAIImageProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
-	generationService := generation.NewService(generationRepository, channelService)
+	generationService := generation.NewService(generationRepository, channelService, pointService)
 	generationHTTP := newGenerationHandlers(generationService, logger)
 	if db != nil {
 		go generation.NewWorker(generationRepository, imageProvider, channelService, assetStorage, logger, cfg.WorkerInterval, cfg.TaskStale).Run(runtimeContext)
@@ -74,6 +79,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Post("/assets", assetHTTP.Upload)
 			protected.Get("/assets/{id}/content", assetHTTP.Content)
 			protected.Get("/models", channelHTTP.PublicModels)
+			protected.Get("/points", pointHTTP.Wallet)
 			protected.Get("/generations/capabilities", generationHTTP.GetCapabilities)
 			protected.Post("/generations/images", generationHTTP.CreateImage)
 			protected.Get("/generations/{id}", generationHTTP.GetTask)
@@ -81,6 +87,13 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Group(func(admin chi.Router) {
 				admin.Use(authHTTP.RequireAdmin)
 				admin.Get("/admin/protocols", channelHTTP.Protocols)
+				admin.Get("/admin/users", adminUserHTTP.List)
+				admin.Post("/admin/users", adminUserHTTP.Create)
+				admin.Patch("/admin/users/{accountId}", adminUserHTTP.Update)
+				admin.Patch("/admin/users/{accountId}/password", adminUserHTTP.ResetPassword)
+				admin.Post("/admin/users/{accountId}/points", pointHTTP.Adjust)
+				admin.Get("/admin/points/rules", pointHTTP.GetRules)
+				admin.Put("/admin/points/rules", pointHTTP.SaveRules)
 				admin.Get("/admin/channels", channelHTTP.List)
 				admin.Post("/admin/channels", channelHTTP.Create)
 				admin.Patch("/admin/channels/{channelId}", channelHTTP.Update)

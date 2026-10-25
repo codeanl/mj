@@ -6,6 +6,7 @@ export type CurrentUser = {
   username: string
   role: "user" | "admin"
   status: "active" | "disabled"
+  pointsBalance: number
   createdAt: string
 }
 
@@ -41,4 +42,3 @@ export async function getCurrentUser() {
   const response = await http.get<ApiResponse<CurrentUser>>("/auth/me")
   return response.data.data
 }
-

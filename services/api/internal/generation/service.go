@@ -7,18 +7,21 @@ import (
 	"unicode/utf8"
 
 	"nova-creator-platform/services/api/internal/modelchannels"
+	"nova-creator-platform/services/api/internal/points"
 )
 
 var ErrInvalidPrompt = errors.New("invalid generation prompt")
 var ErrUnsupportedOptions = errors.New("unsupported generation options")
+var ErrInsufficientPoints = errors.New("insufficient points")
 
 type Service struct {
 	repository *Repository
 	channels   *modelchannels.Service
+	points     *points.Service
 }
 
-func NewService(repository *Repository, channels *modelchannels.Service) *Service {
-	return &Service{repository: repository, channels: channels}
+func NewService(repository *Repository, channels *modelchannels.Service, pointsService *points.Service) *Service {
+	return &Service{repository: repository, channels: channels, points: pointsService}
 }
 
 func (service *Service) CreateImage(ctx context.Context, input CreateImageInput) (Task, error) {
@@ -38,7 +41,11 @@ func (service *Service) CreateImage(ctx context.Context, input CreateImageInput)
 		return Task{}, ErrUnsupportedOptions
 	}
 	options.ChannelID = selected.ChannelID
-	return service.repository.CreateImage(ctx, input.UserID, prompt, options)
+	cost, err := service.points.GenerationCost(ctx, input.Model, "image", options.Resolution)
+	if err != nil {
+		return Task{}, err
+	}
+	return service.repository.CreateImage(ctx, input.UserID, prompt, options, cost)
 }
 
 func resolveImageOptions(input CreateImageInput, configuredModel string) (ImageOptions, bool) {

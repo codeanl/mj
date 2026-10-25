@@ -52,6 +52,23 @@ Windows 下可在项目目录运行：
 
 管理端使用同一登录接口，但 `/api/v1/admin/*` 额外要求 `role=admin`。数据库没有管理员时，迁移会将最早注册账号设为初始管理员。
 
+## 用户管理接口
+
+- `GET /api/v1/admin/users`：服务端分页查询用户，支持邮箱、用户名、补零账号 ID、角色和状态筛选。
+- `POST /api/v1/admin/users`：管理员创建普通用户或管理员账号。
+- `PATCH /api/v1/admin/users/{accountId}`：修改邮箱、用户名、角色和状态。
+- `PATCH /api/v1/admin/users/{accountId}/password`：管理员重置用户密码。
+
+管理界面统一显示公开账号 ID，例如 `ID：0001`，不展示内部 UUID。服务端禁止当前管理员停用或降级自己，并保证系统至少保留一个启用管理员。
+
+## 积分接口
+
+- `GET /api/v1/points`：读取当前用户积分余额和最近积分流水。
+- `GET/PUT /api/v1/admin/points/rules`：读取或保存初始积分、默认模型成本、单模型成本及图片/视频参数倍率。
+- `POST /api/v1/admin/users/{accountId}/points`：管理员按正负数调整用户积分并记录原因。
+
+图片任务创建时在同一数据库事务中预扣积分、创建素材和生成任务；余额不足返回 HTTP 402。Worker 失败时在失败事务中原子退款，`generation-refund:{taskId}` 幂等键保证只退一次。客户端侧边栏和移动端顶部展示当前余额，并在创建任务或失败退款后刷新。
+
 ## 素材接口
 
 - `GET /api/v1/assets`：按当前用户分页查询，支持 `type=image|video`、`source=generated|uploaded` 与 `search`。

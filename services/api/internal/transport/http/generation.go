@@ -78,6 +78,8 @@ func (handlers generationHandlers) writeGenerationError(w http.ResponseWriter, e
 		writeJSON(w, http.StatusBadRequest, response{Code: 40023, Msg: "所选模型、画面比例或分辨率不受支持"})
 	case errors.Is(err, generation.ErrProviderUnavailable):
 		writeJSON(w, http.StatusServiceUnavailable, response{Code: 50311, Msg: "图片生成渠道尚未配置"})
+	case errors.Is(err, generation.ErrInsufficientPoints):
+		writeJSON(w, http.StatusPaymentRequired, response{Code: 40221, Msg: "积分余额不足，请联系管理员充值积分"})
 	case errors.Is(err, generation.ErrTaskNotFound):
 		writeJSON(w, http.StatusNotFound, response{Code: 40411, Msg: "生成任务不存在"})
 	default:

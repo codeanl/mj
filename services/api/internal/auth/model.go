@@ -3,12 +3,13 @@ package auth
 import "time"
 
 type User struct {
-	ID        string    `json:"id"`
-	Email     string    `json:"email"`
-	Username  string    `json:"username"`
-	Role      string    `json:"role"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID            string    `json:"id"`
+	Email         string    `json:"email"`
+	Username      string    `json:"username"`
+	Role          string    `json:"role"`
+	Status        string    `json:"status"`
+	PointsBalance float64   `json:"pointsBalance"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 type userRecord struct {

@@ -20,6 +20,7 @@ import {
 import * as assetApi from "@/services/assets"
 import { apiErrorMessage } from "@/services/http"
 import { notification } from "@/services/notifications"
+import { useAuthStore } from "@/stores/auth"
 
 type AssetFilter = "all" | assetApi.AssetType
 
@@ -42,6 +43,7 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const previewUrls = ref<Record<string, string>>({})
 const previewSignatures = ref<Record<string, string>>({})
 const selectedAsset = ref<assetApi.Asset | null>(null)
+const authStore = useAuthStore()
 let loadSequence = 0
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
@@ -82,7 +84,9 @@ async function loadAssets(options: { silent?: boolean } = {}) {
       search: searchKeyword.value.trim() || undefined,
     })
     if (sequence !== loadSequence) return
+    const refunded = result.items.some((asset) => asset.status === "failed" && assets.value.find((current) => current.id === asset.id)?.status === "generating")
     assets.value = result.items
+    if (refunded) void authStore.refreshPointsBalance()
     total.value = result.total
     if (currentPage.value > totalPages.value) {
       currentPage.value = totalPages.value

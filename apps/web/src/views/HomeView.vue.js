@@ -106,6 +106,7 @@ async function startCreation() {
             pendingAsset,
             ...recentWorks.value.filter((work) => work.id !== task.assetId),
         ].slice(0, 4);
+        authStore.setPointsBalance(task.pointsRemaining);
         notification.success(`生成任务已创建：${task.taskId.slice(0, 8)}`);
         await loadRecentWorks({ silent: true });
     }
@@ -136,7 +137,10 @@ async function loadRecentWorks(options = {}) {
         if (sequence !== recentLoadSequence)
             return;
         const nextWorks = page.items.slice(0, 4);
+        const refunded = nextWorks.some((work) => work.status === "failed" && recentWorks.value.find((current) => current.id === work.id)?.status === "generating");
         recentWorks.value = nextWorks;
+        if (refunded)
+            void authStore.refreshPointsBalance();
         await loadRecentPreviewUrls(nextWorks, sequence);
     }
     catch (error) {

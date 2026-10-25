@@ -30,13 +30,13 @@ func NewPostgresRepository(pool *pgxpool.Pool) *PostgresRepository {
 
 func (repository *PostgresRepository) Create(ctx context.Context, email, username, passwordHash string) (User, error) {
 	row := repository.pool.QueryRow(ctx, `
-		INSERT INTO users (email, username, password_hash)
-		VALUES ($1, $2, $3)
-		RETURNING id::text, email, username, role, status, created_at
+		INSERT INTO users (email, username, password_hash, points_balance)
+		VALUES ($1, $2, $3, (SELECT initial_points FROM points_settings WHERE id = 1))
+		RETURNING id::text, email, username, role, status, points_balance, created_at
 	`, email, username, passwordHash)
 
 	var user User
-	if err := row.Scan(&user.ID, &user.Email, &user.Username, &user.Role, &user.Status, &user.CreatedAt); err != nil {
+	if err := row.Scan(&user.ID, &user.Email, &user.Username, &user.Role, &user.Status, &user.PointsBalance, &user.CreatedAt); err != nil {
 		var postgresError *pgconn.PgError
 		if errors.As(err, &postgresError) && postgresError.Code == "23505" {
 			return User{}, ErrEmailTaken
@@ -48,14 +48,14 @@ func (repository *PostgresRepository) Create(ctx context.Context, email, usernam
 
 func (repository *PostgresRepository) FindByEmail(ctx context.Context, email string) (userRecord, error) {
 	row := repository.pool.QueryRow(ctx, `
-		SELECT id::text, email, username, role, status, created_at, password_hash
+		SELECT id::text, email, username, role, status, points_balance, created_at, password_hash
 		FROM users
 		WHERE lower(email) = lower($1)
 		LIMIT 1
 	`, email)
 
 	var record userRecord
-	if err := row.Scan(&record.ID, &record.Email, &record.Username, &record.Role, &record.Status, &record.CreatedAt, &record.PasswordHash); err != nil {
+	if err := row.Scan(&record.ID, &record.Email, &record.Username, &record.Role, &record.Status, &record.PointsBalance, &record.CreatedAt, &record.PasswordHash); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return userRecord{}, ErrUserMissing
 		}
@@ -66,14 +66,14 @@ func (repository *PostgresRepository) FindByEmail(ctx context.Context, email str
 
 func (repository *PostgresRepository) FindByID(ctx context.Context, id string) (User, error) {
 	row := repository.pool.QueryRow(ctx, `
-		SELECT id::text, email, username, role, status, created_at
+		SELECT id::text, email, username, role, status, points_balance, created_at
 		FROM users
 		WHERE id = $1
 		LIMIT 1
 	`, id)
 
 	var user User
-	if err := row.Scan(&user.ID, &user.Email, &user.Username, &user.Role, &user.Status, &user.CreatedAt); err != nil {
+	if err := row.Scan(&user.ID, &user.Email, &user.Username, &user.Role, &user.Status, &user.PointsBalance, &user.CreatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return User{}, ErrUserMissing
 		}

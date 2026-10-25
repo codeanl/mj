@@ -18,21 +18,25 @@ const (
 )
 
 type Task struct {
-	ID              string     `json:"taskId"`
-	AssetID         string     `json:"assetId"`
-	ChannelID       string     `json:"channelId"`
-	Kind            string     `json:"type"`
-	Status          TaskStatus `json:"status"`
-	Model           string     `json:"model"`
-	Prompt          string     `json:"prompt"`
-	Size            string     `json:"size"`
-	Width           int        `json:"width"`
-	Height          int        `json:"height"`
-	Quality         string     `json:"quality"`
-	ErrorMessage    string     `json:"errorMessage,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	providerSize    string
-	providerQuality string
+	ID                  string     `json:"taskId"`
+	AssetID             string     `json:"assetId"`
+	ChannelID           string     `json:"channelId"`
+	Kind                string     `json:"type"`
+	Status              TaskStatus `json:"status"`
+	Model               string     `json:"model"`
+	Prompt              string     `json:"prompt"`
+	Size                string     `json:"size"`
+	Width               int        `json:"width"`
+	Height              int        `json:"height"`
+	Quality             string     `json:"quality"`
+	ErrorMessage        string     `json:"errorMessage,omitempty"`
+	PointsCost          float64    `json:"pointsCost"`
+	PointsRemaining     float64    `json:"pointsRemaining"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	pointsTransactionID string
+	pointsRefunded      bool
+	providerSize        string
+	providerQuality     string
 }
 
 type ImageOptions struct {

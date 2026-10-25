@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, CircleAlert, Download, Image, Images, Loader
 import * as assetApi from "@/services/assets";
 import { apiErrorMessage } from "@/services/http";
 import { notification } from "@/services/notifications";
+import { useAuthStore } from "@/stores/auth";
 const filters = [
     { value: "all", label: "全部", icon: Images },
     { value: "image", label: "图片", icon: Image },
@@ -22,6 +23,7 @@ const fileInput = ref(null);
 const previewUrls = ref({});
 const previewSignatures = ref({});
 const selectedAsset = ref(null);
+const authStore = useAuthStore();
 let loadSequence = 0;
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 const hasGeneratingAssets = computed(() => assets.value.some((asset) => asset.status === "generating"));
@@ -58,7 +60,10 @@ async function loadAssets(options = {}) {
         });
         if (sequence !== loadSequence)
             return;
+        const refunded = result.items.some((asset) => asset.status === "failed" && assets.value.find((current) => current.id === asset.id)?.status === "generating");
         assets.value = result.items;
+        if (refunded)
+            void authStore.refreshPointsBalance();
         total.value = result.total;
         if (currentPage.value > totalPages.value) {
             currentPage.value = totalPages.value;

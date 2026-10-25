@@ -194,6 +194,14 @@ a {
   white-space: nowrap;
 }
 
+.profile-strip__copy .profile-strip__points {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 4px;
+  color: #d4ba70;
+}
+
 .profile-strip > button {
   display: inline-flex;
   width: 30px;
@@ -227,6 +235,10 @@ a {
 .mobile-header,
 .sidebar__close,
 .sidebar-backdrop {
+  display: none;
+}
+
+.mobile-user-balance {
   display: none;
 }
 
@@ -1616,6 +1628,7 @@ a {
     background: #fff;
   }
   .mobile-header__title { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
+  .mobile-user-balance { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #796124; font-size: 10px; font-weight: 600; }
   .profile-strip__avatar--small { width: 30px; height: 30px; flex-basis: 30px; font-size: 12px; }
   .page-scroll { height: calc(100% - 54px); }
   .creation-stage { min-height: 520px; padding: 48px 20px 34px; }

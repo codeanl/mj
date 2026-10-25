@@ -2,6 +2,8 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    public_id bigint,
+    points_balance numeric(18,2) NOT NULL DEFAULT 100,
     email text NOT NULL,
     username text NOT NULL,
     password_hash text NOT NULL,
@@ -15,6 +17,26 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_lower ON users (lower(email));
 CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS public_id bigint;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS points_balance numeric(18,2) NOT NULL DEFAULT 100;
+CREATE SEQUENCE IF NOT EXISTS users_public_id_seq;
+ALTER SEQUENCE users_public_id_seq OWNED BY users.public_id;
+ALTER TABLE users ALTER COLUMN public_id SET DEFAULT nextval('users_public_id_seq');
+WITH base AS (
+    SELECT coalesce(max(public_id), 0) AS maximum FROM users
+), missing AS (
+    SELECT id, row_number() OVER (ORDER BY created_at ASC, id ASC) AS position
+    FROM users
+    WHERE public_id IS NULL
+)
+UPDATE users
+SET public_id = base.maximum + missing.position
+FROM base, missing
+WHERE users.id = missing.id;
+SELECT setval('users_public_id_seq', greatest(coalesce((SELECT max(public_id) FROM users), 0) + 1, 1), false);
+ALTER TABLE users ALTER COLUMN public_id SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_public_id_unique ON users (public_id);
 
 UPDATE users
 SET role = 'admin', updated_at = now()
@@ -72,6 +94,49 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     CONSTRAINT generation_tasks_kind_check CHECK (kind IN ('image', 'video')),
     CONSTRAINT generation_tasks_status_check CHECK (status IN ('queued', 'running', 'succeeded', 'failed'))
 );
+
+CREATE TABLE IF NOT EXISTS points_settings (
+    id smallint PRIMARY KEY DEFAULT 1,
+    initial_points numeric(18,2) NOT NULL DEFAULT 100,
+    default_model_cost numeric(18,2) NOT NULL DEFAULT 1,
+    image_quality_multipliers jsonb NOT NULL DEFAULT '{"1K":1,"2K":2}'::jsonb,
+    video_quality_multipliers jsonb NOT NULL DEFAULT '{"480":1,"720":1.5,"1080":2}'::jsonb,
+    video_seconds_multipliers jsonb NOT NULL DEFAULT '{"5":1,"10":2}'::jsonb,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT points_settings_singleton CHECK (id = 1),
+    CONSTRAINT points_settings_values CHECK (initial_points >= 0 AND default_model_cost >= 0)
+);
+
+INSERT INTO points_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS model_point_rules (
+    model_id text PRIMARY KEY,
+    cost numeric(18,2) NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT model_point_rules_cost_check CHECK (cost >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS point_transactions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    type text NOT NULL,
+    amount numeric(18,2) NOT NULL,
+    balance_after numeric(18,2) NOT NULL,
+    description text NOT NULL,
+    model text,
+    source_id text,
+    idempotency_key text NOT NULL UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT point_transactions_type_check CHECK (type IN ('credit', 'consume', 'refund', 'adjustment')),
+    CONSTRAINT point_transactions_balance_check CHECK (balance_after >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS point_transactions_user_created_idx ON point_transactions (user_id, created_at DESC);
+
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_cost numeric(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_transaction_id uuid REFERENCES point_transactions(id) ON DELETE SET NULL;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_refunded boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS model_channels (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
