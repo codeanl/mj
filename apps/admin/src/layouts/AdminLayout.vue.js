@@ -1,6 +1,6 @@
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { Bell, Bot, ChevronLeft, CircleDollarSign, Menu, LogOut, Search, ShieldCheck, UsersRound, X, } from "@lucide/vue";
+import { Activity, Bell, Bot, ChevronLeft, CircleDollarSign, Menu, LogOut, Search, ShieldCheck, UsersRound, X, } from "@lucide/vue";
 import BrandMark from "@/components/BrandMark.vue";
 import { useAdminAuthStore } from "@/stores/auth";
 const route = useRoute();
@@ -10,7 +10,7 @@ const mobileOpen = ref(false);
 const collapsed = ref(false);
 const groups = [
     { title: "财务管理", items: [{ label: "积分规则", path: "/points", icon: CircleDollarSign }] },
-    { title: "上游配置", items: [{ label: "模型渠道", path: "/channels", icon: Bot }] },
+    { title: "上游配置", items: [{ label: "模型渠道", path: "/channels", icon: Bot }, { label: "生成任务", path: "/generation", icon: Activity }] },
     { title: "系统管理", items: [{ label: "用户管理", path: "/users", icon: UsersRound }] },
 ];
 const title = computed(() => String(route.meta.title || "管理控制台"));

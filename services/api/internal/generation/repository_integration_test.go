@@ -31,10 +31,10 @@ func TestCreateImagesChargesAndRefundsEachTask(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO model_channels (id, name, base_url, protocol) VALUES ($1, 'batch-test', 'https://example.com/v1', 'openai')`, channelID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	defer func() {
 		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
 		_, _ = pool.Exec(ctx, `DELETE FROM model_channels WHERE id = $1`, channelID)
-	})
+	}()
 	for _, referenceID := range referenceIDs {
 		if _, err := pool.Exec(ctx, `
 			INSERT INTO media_assets (id, user_id, kind, source, status, title, original_name, storage_key, mime_type, size_bytes, width, height)

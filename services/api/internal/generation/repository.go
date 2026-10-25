@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 	"unicode/utf8"
 
@@ -253,8 +254,9 @@ func (repository *Repository) Fail(ctx context.Context, task Task, message strin
 	}
 	var cost float64
 	var refunded bool
+	var retryCount int
 	var userID, model string
-	if err := tx.QueryRow(ctx, `SELECT user_id::text, model, points_cost, points_refunded FROM generation_tasks WHERE id = $1 FOR UPDATE`, task.ID).Scan(&userID, &model, &cost, &refunded); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT user_id::text, model, points_cost, points_refunded, retry_count FROM generation_tasks WHERE id = $1 FOR UPDATE`, task.ID).Scan(&userID, &model, &cost, &refunded, &retryCount); err != nil {
 		return err
 	}
 	if cost > 0 && !refunded {
@@ -266,7 +268,7 @@ func (repository *Repository) Fail(ctx context.Context, task Task, message strin
 			INSERT INTO point_transactions (id, user_id, type, amount, balance_after, description, model, source_id, idempotency_key)
 			VALUES ($1, $2, 'refund', $3::numeric, $4::numeric, '图片生成失败退款', $5, $6, $7)
 			ON CONFLICT (idempotency_key) DO NOTHING
-		`, uuid.NewString(), userID, cost, balance, model, task.ID, "generation-refund:"+task.ID); err != nil {
+		`, uuid.NewString(), userID, cost, balance, model, task.ID, fmt.Sprintf("generation-refund:%s:%d", task.ID, retryCount)); err != nil {
 			return err
 		}
 		refunded = true

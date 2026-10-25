@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"nova-creator-platform/services/api/internal/admingenerations"
 	"nova-creator-platform/services/api/internal/adminusers"
 	"nova-creator-platform/services/api/internal/assets"
 	"nova-creator-platform/services/api/internal/auth"
@@ -29,7 +30,9 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 	if err != nil {
 		panic(err)
 	}
-	assetHTTP := newAssetHandlers(assets.NewService(assets.NewPostgresRepository(db), assetStorage), logger, cfg.AssetMaxBytes)
+	assetService := assets.NewService(assets.NewPostgresRepository(db), assetStorage)
+	assetHTTP := newAssetHandlers(assetService, logger, cfg.AssetMaxBytes)
+	adminGenerationHTTP := newAdminGenerationHandlers(admingenerations.NewService(admingenerations.NewRepository(db)), assetService, logger)
 	channelRepository := modelchannels.NewRepository(db)
 	channelService := modelchannels.NewService(channelRepository, modelchannels.NewSecretCipher(cfg.JWTSecret), cfg.GenerationTimeout)
 	if db != nil {
@@ -92,6 +95,12 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 				admin.Patch("/admin/users/{accountId}", adminUserHTTP.Update)
 				admin.Patch("/admin/users/{accountId}/password", adminUserHTTP.ResetPassword)
 				admin.Post("/admin/users/{accountId}/points", pointHTTP.Adjust)
+				admin.Get("/admin/generations", adminGenerationHTTP.List)
+				admin.Get("/admin/generations/{taskId}", adminGenerationHTTP.Get)
+				admin.Get("/admin/generations/{taskId}/preview", adminGenerationHTTP.Preview)
+				admin.Post("/admin/generations/{taskId}/retry", adminGenerationHTTP.Retry)
+				admin.Post("/admin/generations/{taskId}/cancel", adminGenerationHTTP.Cancel)
+				admin.Post("/admin/generations/{taskId}/refund", adminGenerationHTTP.Refund)
 				admin.Get("/admin/points/rules", pointHTTP.GetRules)
 				admin.Put("/admin/points/rules", pointHTTP.SaveRules)
 				admin.Get("/admin/channels", channelHTTP.List)

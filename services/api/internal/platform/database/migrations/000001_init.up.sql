@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS generation_tasks (
     started_at timestamptz,
     completed_at timestamptz,
     CONSTRAINT generation_tasks_kind_check CHECK (kind IN ('image', 'video')),
-    CONSTRAINT generation_tasks_status_check CHECK (status IN ('queued', 'running', 'succeeded', 'failed'))
+    CONSTRAINT generation_tasks_status_check CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled'))
 );
 
 CREATE TABLE IF NOT EXISTS points_settings (
@@ -137,6 +137,9 @@ CREATE INDEX IF NOT EXISTS point_transactions_user_created_idx ON point_transact
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_cost numeric(18,2) NOT NULL DEFAULT 0;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_transaction_id uuid REFERENCES point_transactions(id) ON DELETE SET NULL;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_refunded boolean NOT NULL DEFAULT false;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS retry_count integer NOT NULL DEFAULT 0;
+ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_status_check;
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_status_check CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled'));
 
 CREATE TABLE IF NOT EXISTS model_channels (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

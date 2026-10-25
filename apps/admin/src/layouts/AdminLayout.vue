@@ -2,6 +2,7 @@
 import { computed, ref } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
+	Activity,
   Bell,
   Bot,
   ChevronLeft,
@@ -25,7 +26,7 @@ const collapsed = ref(false)
 
 const groups = [
   { title: "财务管理", items: [{ label: "积分规则", path: "/points", icon: CircleDollarSign }] },
-  { title: "上游配置", items: [{ label: "模型渠道", path: "/channels", icon: Bot }] },
+	{ title: "上游配置", items: [{ label: "模型渠道", path: "/channels", icon: Bot }, { label: "生成任务", path: "/generation", icon: Activity }] },
   { title: "系统管理", items: [{ label: "用户管理", path: "/users", icon: UsersRound }] },
 ]
 

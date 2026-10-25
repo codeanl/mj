@@ -93,6 +93,15 @@ func (service *Service) Open(ctx context.Context, userID, id string) (Asset, io.
 	return asset, file, err
 }
 
+func (service *Service) OpenByID(ctx context.Context, id string) (Asset, io.ReadSeekCloser, error) {
+	asset, err := service.repository.FindByID(ctx, id)
+	if err != nil {
+		return Asset{}, nil, err
+	}
+	file, err := service.storage.Open(asset.storageKey)
+	return asset, file, err
+}
+
 func ParseMediaType(mimeType string) (Kind, string, bool) {
 	mediaType, _, err := mime.ParseMediaType(mimeType)
 	if err != nil {

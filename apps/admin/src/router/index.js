@@ -3,6 +3,7 @@ import { useAdminAuthStore } from "@/stores/auth";
 const adminSections = [
     ["users", "用户管理", "管理用户账户、状态、角色和权益。"],
     ["channels", "模型渠道", "配置供应商、密钥、模型目录和路由。"],
+    ["generation", "生成任务", "追踪生成状态、上游渠道、积分与失败原因。"],
     ["points", "积分规则", "配置新用户积分、模型基础扣费和生成参数倍率。"],
 ];
 const router = createRouter({
@@ -15,7 +16,7 @@ const router = createRouter({
             redirect: "/users",
             children: adminSections.map(([path, title, description]) => ({
                 path,
-                component: path === "channels" ? () => import("@/views/ChannelsView.vue") : path === "users" ? () => import("@/views/UsersView.vue") : () => import("@/views/PointsRulesView.vue"),
+                component: path === "channels" ? () => import("@/views/ChannelsView.vue") : path === "generation" ? () => import("@/views/GenerationTasksView.vue") : path === "users" ? () => import("@/views/UsersView.vue") : () => import("@/views/PointsRulesView.vue"),
                 meta: { title, description },
             })),
         },

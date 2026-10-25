@@ -34,6 +34,10 @@ func (repository *captureRepository) Find(context.Context, string, string) (Asse
 	return Asset{}, ErrNotFound
 }
 
+func (repository *captureRepository) FindByID(context.Context, string) (Asset, error) {
+	return Asset{}, ErrNotFound
+}
+
 func TestListValidatesAndPassesSourceFilter(t *testing.T) {
 	repository := &captureRepository{}
 	storage, err := NewLocalStorage(t.TempDir())

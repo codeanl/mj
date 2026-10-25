@@ -14,6 +14,7 @@ type Repository interface {
 	Create(context.Context, CreateInput) (Asset, error)
 	List(context.Context, string, Kind, Source, string, int, int) (Page, error)
 	Find(context.Context, string, string) (Asset, error)
+	FindByID(context.Context, string) (Asset, error)
 }
 
 type PostgresRepository struct {
@@ -73,6 +74,20 @@ func (repository *PostgresRepository) Find(ctx context.Context, userID, id strin
 		WHERE id = $1 AND user_id = $2
 		LIMIT 1
 	`, id, userID)
+	asset, err := scanAsset(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Asset{}, ErrNotFound
+	}
+	return asset, err
+}
+
+func (repository *PostgresRepository) FindByID(ctx context.Context, id string) (Asset, error) {
+	row := repository.pool.QueryRow(ctx, `
+		SELECT id::text, kind, source, status, title, coalesce(original_name, ''), coalesce(storage_key, ''), coalesce(mime_type, ''), size_bytes, width, height, duration_seconds, created_at, coalesce(error_message, '')
+		FROM media_assets
+		WHERE id = $1 AND status = 'ready'
+		LIMIT 1
+	`, id)
 	asset, err := scanAsset(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Asset{}, ErrNotFound
