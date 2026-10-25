@@ -80,6 +80,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 
 			protected.Group(func(admin chi.Router) {
 				admin.Use(authHTTP.RequireAdmin)
+				admin.Get("/admin/protocols", channelHTTP.Protocols)
 				admin.Get("/admin/channels", channelHTTP.List)
 				admin.Post("/admin/channels", channelHTTP.Create)
 				admin.Patch("/admin/channels/{channelId}", channelHTTP.Update)

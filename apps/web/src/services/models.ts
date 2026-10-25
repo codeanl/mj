@@ -7,6 +7,6 @@ export type PublicModel = {
 }
 
 export async function listImageModels() {
-  const response = await http.get<ApiResponse<{ models: PublicModel[] }>>("/models")
+  const response = await http.get<ApiResponse<{ models: PublicModel[] }>>("/models?capability=image")
   return response.data.data.models
 }

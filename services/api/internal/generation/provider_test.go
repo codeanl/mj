@@ -36,3 +36,33 @@ func TestProviderUsesTaskSpecificImageOptions(t *testing.T) {
 		t.Fatalf("unexpected provider request: %#v", body)
 	}
 }
+
+func TestProviderUsesStableDiffusionAdvancedRouteWithoutAPIKey(t *testing.T) {
+	var body map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sdapi/v1/txt2img" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Fatal("stable diffusion no-auth channel must not send authorization")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="]}`))
+	}))
+	defer server.Close()
+
+	provider := NewOpenAIImageProvider(time.Second, 1024*1024)
+	_, err := provider.Generate(context.Background(), Task{Prompt: "测试", Width: 1024, Height: 1024}, modelchannels.ResolvedModel{
+		BaseURL: server.URL, Protocol: "stable-diffusion", UpstreamModel: "checkpoint-one",
+		AdvancedConfig: modelchannels.AdvancedConfig{AuthMode: "none", CreatePath: "/sdapi/v1/txt2img"},
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if body["width"] != float64(1024) || body["height"] != float64(1024) {
+		t.Fatalf("unexpected dimensions: %#v", body)
+	}
+}

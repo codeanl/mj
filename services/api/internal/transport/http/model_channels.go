@@ -18,12 +18,16 @@ func newModelChannelHandlers(service *modelchannels.Service, logger *slog.Logger
 }
 
 func (handlers modelChannelHandlers) PublicModels(w http.ResponseWriter, r *http.Request) {
-	models, err := handlers.service.PublicModels(r.Context())
+	models, err := handlers.service.PublicModels(r.Context(), r.URL.Query().Get("capability"))
 	if err != nil {
 		handlers.writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"models": models}, Msg: "获取成功"})
+}
+
+func (handlers modelChannelHandlers) Protocols(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"protocols": modelchannels.ProtocolDefinitions()}, Msg: "获取成功"})
 }
 
 func (handlers modelChannelHandlers) List(w http.ResponseWriter, r *http.Request) {
@@ -128,9 +132,9 @@ func (handlers modelChannelHandlers) DeleteModel(w http.ResponseWriter, r *http.
 func (handlers modelChannelHandlers) writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, modelchannels.ErrInvalidChannel):
-		writeJSON(w, http.StatusBadRequest, response{Code: 40033, Msg: "请填写有效的渠道名称、HTTPS Base URL 和 API Key"})
+		writeJSON(w, http.StatusBadRequest, response{Code: 40033, Msg: "请填写有效的渠道名称、HTTPS Base URL、协议与鉴权配置"})
 	case errors.Is(err, modelchannels.ErrInvalidModel):
-		writeJSON(w, http.StatusBadRequest, response{Code: 40034, Msg: "请填写有效的图片模型 ID 和名称"})
+		writeJSON(w, http.StatusBadRequest, response{Code: 40034, Msg: "请填写有效的模型 ID、名称和能力"})
 	case errors.Is(err, modelchannels.ErrChannelNotFound):
 		writeJSON(w, http.StatusNotFound, response{Code: 40431, Msg: "模型渠道不存在"})
 	case errors.Is(err, modelchannels.ErrModelNotFound):

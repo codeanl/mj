@@ -1,9 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router"
 
-import AdminLayout from "@/layouts/AdminLayout.vue"
-import ChannelsView from "@/views/ChannelsView.vue"
-import EmptyAdminView from "@/views/EmptyAdminView.vue"
-import LoginView from "@/views/LoginView.vue"
 import { useAdminAuthStore } from "@/stores/auth"
 
 const adminSections = [
@@ -24,16 +20,16 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      component: AdminLayout,
+      component: () => import("@/layouts/AdminLayout.vue"),
       meta: { requiresAdmin: true },
       redirect: "/overview",
       children: adminSections.map(([path, title, description]) => ({
         path,
-        component: path === "channels" ? ChannelsView : EmptyAdminView,
+        component: path === "channels" ? () => import("@/views/ChannelsView.vue") : () => import("@/views/EmptyAdminView.vue"),
         meta: { title, description },
       })),
     },
-    { path: "/login", component: LoginView, meta: { title: "管理员登录", guestOnly: true } },
+    { path: "/login", component: () => import("@/views/LoginView.vue"), meta: { title: "管理员登录", guestOnly: true } },
   ],
 })
 

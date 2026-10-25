@@ -1,9 +1,9 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useDebounceFn, useIntervalFn } from "@vueuse/core";
-import { ElMessage } from "element-plus";
 import { ChevronLeft, ChevronRight, CircleAlert, Download, Image, Images, LoaderCircle, Play, Plus, Search, Upload, Video, X, } from "@lucide/vue";
 import * as assetApi from "@/services/assets";
 import { apiErrorMessage } from "@/services/http";
+import { notification } from "@/services/notifications";
 const filters = [
     { value: "all", label: "全部", icon: Images },
     { value: "image", label: "图片", icon: Image },
@@ -68,7 +68,7 @@ async function loadAssets(options = {}) {
     }
     catch (error) {
         if (sequence === loadSequence)
-            ElMessage.error(apiErrorMessage(error, "素材加载失败"));
+            notification.error(apiErrorMessage(error, "素材加载失败"));
     }
     finally {
         if (sequence === loadSequence) {
@@ -131,7 +131,7 @@ async function handleFileSelection(event) {
     uploading.value = true;
     try {
         await assetApi.uploadAsset(file);
-        ElMessage.success("素材上传成功");
+        notification.success("素材上传成功");
         activeFilter.value = "all";
         searchKeyword.value = "";
         if (currentPage.value !== 1)
@@ -140,7 +140,7 @@ async function handleFileSelection(event) {
             await loadAssets();
     }
     catch (error) {
-        ElMessage.error(apiErrorMessage(error, "素材上传失败"));
+        notification.error(apiErrorMessage(error, "素材上传失败"));
     }
     finally {
         uploading.value = false;
@@ -151,7 +151,7 @@ function openAsset(asset) {
     if (asset.status !== "ready")
         return;
     if (!previewUrls.value[asset.id]) {
-        ElMessage.warning("素材预览暂不可用");
+        notification.warning("素材预览暂不可用");
         return;
     }
     selectedAsset.value = asset;
@@ -167,7 +167,7 @@ async function downloadAsset(asset) {
         URL.revokeObjectURL(url);
     }
     catch (error) {
-        ElMessage.error(apiErrorMessage(error, "素材下载失败"));
+        notification.error(apiErrorMessage(error, "素材下载失败"));
     }
 }
 function setPage(page) {

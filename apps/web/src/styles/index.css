@@ -1,7 +1,5 @@
-@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap");
-
 :root {
-  font-family: "Manrope", "Noto Sans SC", sans-serif;
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
   color: #171b22;
   background: #f4f6f8;
   font-synthesis: none;
@@ -32,7 +30,8 @@ body,
 
 button,
 textarea,
-input {
+input,
+select {
   font: inherit;
   letter-spacing: 0;
 }
@@ -242,18 +241,34 @@ a {
   min-height: 485px;
   overflow: hidden;
   padding: 72px 6% 40px;
-  background-image:
+  background: #263a49;
+}
+
+.creation-stage__backdrop {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.creation-stage::before {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background:
     linear-gradient(90deg, rgb(12 17 23 / 82%) 0%, rgb(18 26 36 / 50%) 40%, rgb(18 26 36 / 10%) 72%),
-    linear-gradient(0deg, rgb(22 27 33 / 65%) 0%, transparent 45%),
-    url("https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=2200&q=88");
-  background-position: center;
-  background-size: cover;
+    linear-gradient(0deg, rgb(22 27 33 / 65%) 0%, transparent 45%);
+  content: "";
+  pointer-events: none;
 }
 
 .creation-stage::after {
   position: absolute;
   inset: auto 0 0;
   height: 100px;
+  z-index: 1;
   background: linear-gradient(transparent, #f5f7f9);
   content: "";
   pointer-events: none;
@@ -458,6 +473,8 @@ a {
 }
 
 .compact-select {
+  position: relative;
+  display: block;
   width: 128px;
 }
 
@@ -465,12 +482,68 @@ a {
   width: 92px;
 }
 
-.compact-select .el-select__wrapper {
-  min-height: 34px;
+.compact-select select {
+  width: 100%;
+  height: 34px;
+  appearance: none;
+  border: 0;
   border-radius: 6px;
+  outline: 0;
+  padding: 0 30px 0 12px;
   background: #f2f4f7;
-  box-shadow: none;
+  color: #505966;
+  cursor: pointer;
+  font-size: 12px;
 }
+
+.compact-select select:focus-visible {
+  box-shadow: 0 0 0 2px rgb(83 102 232 / 20%);
+}
+
+.compact-select select:disabled {
+  cursor: not-allowed;
+  color: #9aa2ac;
+}
+
+.compact-select > svg {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  color: #8b949f;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.app-notification {
+  position: fixed;
+  z-index: 3000;
+  top: 18px;
+  left: 50%;
+  display: grid;
+  width: min(420px, calc(100vw - 28px));
+  min-height: 42px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #dbe1e7;
+  border-radius: 7px;
+  padding: 9px 10px 9px 12px;
+  background: #fff;
+  box-shadow: 0 14px 36px rgb(24 32 42 / 16%);
+  color: #4c5661;
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+
+.app-notification.is-success { border-color: #b9dfd0; color: #237357; }
+.app-notification.is-error { border-color: #edc6ca; color: #ad414a; }
+.app-notification.is-warning { border-color: #ead8a9; color: #85671d; }
+.app-notification.is-info { border-color: #c9d4ef; color: #4c64a8; }
+.app-notification > span { overflow-wrap: anywhere; }
+.app-notification > button { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 5px; background: transparent; color: currentColor; cursor: pointer; }
+.app-notification > button:hover { background: rgb(0 0 0 / 5%); }
+.app-notice-enter-active, .app-notice-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
+.app-notice-enter-from, .app-notice-leave-to { opacity: 0; transform: translate(-50%, -8px); }
 
 .create-button {
   display: inline-flex;
@@ -1581,7 +1654,8 @@ a {
   .composer__selects { display: grid; max-width: none; grid-template-columns: 88px 56px 56px; gap: 4px; }
   .compact-select { width: 88px; }
   .compact-select--small { width: 56px; }
-  .compact-select .el-select__wrapper { padding: 4px 7px; font-size: 11px; }
+  .compact-select select { padding: 0 24px 0 7px; font-size: 11px; }
+  .compact-select > svg { right: 6px; width: 12px; }
   .media-grid--recent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .media-tile { aspect-ratio: 0.92; }
   .media-tile__play { display: none; }

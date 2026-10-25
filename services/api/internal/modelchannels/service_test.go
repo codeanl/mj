@@ -41,7 +41,7 @@ func TestModelValidationAndImageCatalogDetection(t *testing.T) {
 	if err != nil || model.DisplayName != "gpt-image-2" || model.ModelID != "gpt-image-2" {
 		t.Fatalf("unexpected model normalization: %#v %v", model, err)
 	}
-	if !imageModelID("gpt-image-2") || !imageModelID("flux-pro") || imageModelID("gpt-4.1") {
+	if inferCapability("gpt-image-2") != "image" || inferCapability("flux-pro") != "image" || inferCapability("gpt-4.1") != "text" || inferCapability("veo-3") != "video" || inferCapability("viduq3-pro") != "video" || inferCapability("jimeng_ti2v_v30_pro") != "video" || inferCapability("tts-1") != "audio" {
 		t.Fatal("unexpected image model inference")
 	}
 }

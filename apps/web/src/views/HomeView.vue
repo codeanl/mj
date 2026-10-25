@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
-import { ElMessage } from "element-plus"
+import { useIntervalFn } from "@vueuse/core"
 import {
   ArrowRight,
   Bell,
+  ChevronDown,
   Clock3,
   Image,
   LoaderCircle,
@@ -23,6 +24,7 @@ import {
 } from "@/services/generation"
 import { apiErrorMessage } from "@/services/http"
 import { listImageModels } from "@/services/models"
+import { notification } from "@/services/notifications"
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -58,10 +60,27 @@ const darkMode = ref(false)
 const creating = ref(false)
 const modelsLoading = ref(true)
 const recentLoading = ref(true)
+const recentRefreshing = ref(false)
 const recentWorks = ref<assetApi.Asset[]>([])
 const recentPreviewUrls = ref<Record<string, string>>({})
+const recentPreviewSignatures = ref<Record<string, string>>({})
+const showHeroBackdrop = ref(false)
+let recentLoadSequence = 0
+let heroIdleHandle: number | undefined
 
 const currentCapability = computed(() => capabilities.value[activeType.value as keyof GenerationCapabilities])
+const hasGeneratingRecentWorks = computed(() => recentWorks.value.some((work) => work.status === "generating"))
+const refreshInterval = Number(import.meta.env.VITE_GENERATION_REFRESH_INTERVAL_MS || 3000)
+
+const { pause: pauseRecentRefresh, resume: resumeRecentRefresh } = useIntervalFn(
+  () => {
+    if (!recentLoading.value && !recentRefreshing.value && hasGeneratingRecentWorks.value) void loadRecentWorks({ silent: true })
+  },
+  Number.isFinite(refreshInterval) && refreshInterval > 0 ? refreshInterval : 3000,
+  { immediate: false },
+)
+
+watch(hasGeneratingRecentWorks, (hasGenerating) => (hasGenerating ? resumeRecentRefresh() : pauseRecentRefresh()), { immediate: true })
 
 const promptPlaceholder = computed(() => {
   const labels: Record<string, string> = {
@@ -78,37 +97,55 @@ function selectCreationType(id: string) {
 
 async function startCreation() {
   if (!prompt.value.trim()) {
-    ElMessage.info("先写下你的创作想法")
+    notification.info("先写下你的创作想法")
     return
   }
   if (activeType.value === "video") {
-    ElMessage.info("当前后端暂未配置视频生成渠道")
+    notification.info("当前后端暂未配置视频生成渠道")
     return
   }
   if (!selectedModel.value) {
-    ElMessage.warning("当前没有可用的图片模型，请联系管理员配置模型渠道")
+    notification.warning("当前没有可用的图片模型，请联系管理员配置模型渠道")
     return
   }
   if (creating.value) return
   creating.value = true
   try {
+    const submittedPrompt = prompt.value.trim()
     const task = await createImageGeneration({
-      prompt: prompt.value.trim(),
+      prompt: submittedPrompt,
       model: selectedModel.value,
       size: selectedSize.value,
       quality: selectedQuality.value,
     })
-    ElMessage.success(`生成任务已创建：${task.taskId.slice(0, 8)}`)
-    await router.push("/assets")
+    const pendingAsset: assetApi.Asset = {
+      id: task.assetId,
+      type: "image",
+      source: "generated",
+      status: "generating",
+      title: submittedPrompt.slice(0, 80),
+      url: "",
+      downloadUrl: "",
+      sizeBytes: 0,
+      width: task.width,
+      height: task.height,
+      createdAt: task.createdAt,
+    }
+    recentWorks.value = [
+      pendingAsset,
+      ...recentWorks.value.filter((work) => work.id !== task.assetId),
+    ].slice(0, 4)
+    notification.success(`生成任务已创建：${task.taskId.slice(0, 8)}`)
+    await loadRecentWorks({ silent: true })
   } catch (error) {
-    ElMessage.error(apiErrorMessage(error, "图片生成任务创建失败"))
+    notification.error(apiErrorMessage(error, "图片生成任务创建失败"))
   } finally {
     creating.value = false
   }
 }
 
 function openPlaceholder(label: string) {
-  ElMessage.info(`${label} 页面将在下一阶段接入`)
+  notification.info(`${label} 页面将在下一阶段接入`)
 }
 
 function applyCapabilityDefaults() {
@@ -118,29 +155,53 @@ function applyCapabilityDefaults() {
   selectedQuality.value = capability?.qualities[0]?.value || ""
 }
 
-async function loadRecentWorks() {
-  recentLoading.value = true
+async function loadRecentWorks(options: { silent?: boolean } = {}) {
+  const sequence = ++recentLoadSequence
+  if (options.silent) recentRefreshing.value = true
+  else recentLoading.value = true
   try {
     const page = await assetApi.listAssets({ page: 1, pageSize: 8, source: "generated" })
-    recentWorks.value = page.items.slice(0, 4)
-    const entries = await Promise.all(
-      recentWorks.value.map(async (work) => {
-        if (work.status !== "ready" || !work.url) return [work.id, ""] as const
-        try {
-          const blob = await assetApi.getAssetContent(work.url)
-          return [work.id, URL.createObjectURL(blob)] as const
-        } catch {
-          return [work.id, ""] as const
-        }
-      }),
-    )
-    revokeRecentPreviewUrls()
-    recentPreviewUrls.value = Object.fromEntries(entries)
+    if (sequence !== recentLoadSequence) return
+    const nextWorks = page.items.slice(0, 4)
+    recentWorks.value = nextWorks
+    await loadRecentPreviewUrls(nextWorks, sequence)
   } catch (error) {
-    ElMessage.error(apiErrorMessage(error, "最近创作加载失败"))
+    if (sequence === recentLoadSequence && !options.silent) notification.error(apiErrorMessage(error, "最近创作加载失败"))
   } finally {
-    recentLoading.value = false
+    if (sequence === recentLoadSequence) {
+      recentLoading.value = false
+      recentRefreshing.value = false
+    }
   }
+}
+
+async function loadRecentPreviewUrls(works: assetApi.Asset[], sequence: number) {
+  const existingUrls = recentPreviewUrls.value
+  const existingSignatures = recentPreviewSignatures.value
+  const entries = await Promise.all(
+    works.map(async (work) => {
+      const signature = `${work.status}:${work.url}:${work.sizeBytes}`
+      if (work.status !== "ready" || !work.url) return { id: work.id, url: "", signature, created: false }
+      if (existingUrls[work.id] && existingSignatures[work.id] === signature) return { id: work.id, url: existingUrls[work.id], signature, created: false }
+      try {
+        const blob = await assetApi.getAssetContent(work.url)
+        return { id: work.id, url: URL.createObjectURL(blob), signature, created: true }
+      } catch {
+        return { id: work.id, url: "", signature: "", created: false }
+      }
+    }),
+  )
+  if (sequence !== recentLoadSequence) {
+    entries.forEach((entry) => entry.created && entry.url && URL.revokeObjectURL(entry.url))
+    return
+  }
+  const nextUrls = Object.fromEntries(entries.map((entry) => [entry.id, entry.url]))
+  const nextSignatures = Object.fromEntries(entries.map((entry) => [entry.id, entry.signature]))
+  Object.entries(existingUrls).forEach(([id, url]) => {
+    if (url && nextUrls[id] !== url) URL.revokeObjectURL(url)
+  })
+  recentPreviewUrls.value = nextUrls
+  recentPreviewSignatures.value = nextSignatures
 }
 
 async function loadModels() {
@@ -152,7 +213,7 @@ async function loadModels() {
   } catch (error) {
     capabilities.value.image.models = []
     selectedModel.value = ""
-    ElMessage.error(apiErrorMessage(error, "图片模型加载失败"))
+    notification.error(apiErrorMessage(error, "图片模型加载失败"))
   } finally {
     modelsLoading.value = false
   }
@@ -161,6 +222,7 @@ async function loadModels() {
 function revokeRecentPreviewUrls() {
   Object.values(recentPreviewUrls.value).forEach((url) => url && URL.revokeObjectURL(url))
   recentPreviewUrls.value = {}
+  recentPreviewSignatures.value = {}
 }
 
 function recentMeta(work: assetApi.Asset) {
@@ -176,13 +238,20 @@ function recentMeta(work: assetApi.Asset) {
 
 onMounted(() => {
   void Promise.all([loadModels(), loadRecentWorks()])
+  if ("requestIdleCallback" in window) heroIdleHandle = window.requestIdleCallback(() => (showHeroBackdrop.value = true))
+  else requestAnimationFrame(() => (showHeroBackdrop.value = true))
 })
-onBeforeUnmount(revokeRecentPreviewUrls)
+onBeforeUnmount(() => {
+  if (heroIdleHandle !== undefined && "cancelIdleCallback" in window) window.cancelIdleCallback(heroIdleHandle)
+  pauseRecentRefresh()
+  revokeRecentPreviewUrls()
+})
 </script>
 
 <template>
   <div class="home-page" :class="{ 'home-page--dark': darkMode }">
     <section class="creation-stage">
+      <img v-if="showHeroBackdrop" class="creation-stage__backdrop" src="https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=2200&q=82" alt="" loading="lazy" decoding="async" fetchpriority="low" />
       <div class="creation-stage__toolbar">
         <button class="round-action" type="button" aria-label="通知">
           <Bell :size="18" />
@@ -227,15 +296,9 @@ onBeforeUnmount(revokeRecentPreviewUrls)
             <textarea v-model="prompt" :placeholder="promptPlaceholder" rows="3" maxlength="1000" />
             <div class="composer__options">
               <div class="composer__selects">
-                <el-select v-model="selectedModel" class="compact-select" aria-label="模型" :loading="modelsLoading" :placeholder="modelsLoading ? '加载模型' : '暂无模型'">
-                  <el-option v-for="option in currentCapability?.models || []" :key="option.value" :label="option.label" :value="option.value" />
-                </el-select>
-                <el-select v-model="selectedSize" class="compact-select compact-select--small" aria-label="画面比例" :disabled="!currentCapability?.enabled">
-                  <el-option v-for="option in currentCapability?.sizes || []" :key="option.value" :label="option.label" :value="option.value" />
-                </el-select>
-                <el-select v-model="selectedQuality" class="compact-select compact-select--small" aria-label="分辨率" :disabled="!currentCapability?.enabled">
-                  <el-option v-for="option in currentCapability?.qualities || []" :key="option.value" :label="option.label" :value="option.value" />
-                </el-select>
+                <label class="compact-select"><select v-model="selectedModel" aria-label="模型" :disabled="modelsLoading || !currentCapability?.models.length"><option v-if="modelsLoading" value="">加载模型</option><option v-else-if="!currentCapability?.models.length" value="">暂无模型</option><option v-for="option in currentCapability?.models || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
+                <label class="compact-select compact-select--small"><select v-model="selectedSize" aria-label="画面比例" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.sizes || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
+                <label class="compact-select compact-select--small"><select v-model="selectedQuality" aria-label="分辨率" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.qualities || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
               </div>
               <button class="create-button" type="button" :disabled="creating || modelsLoading || !selectedModel" @click="startCreation">
                 <LoaderCircle v-if="creating" class="spin" :size="18" />

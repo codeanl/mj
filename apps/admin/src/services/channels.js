@@ -2,6 +2,9 @@ import { request } from "./http";
 export function listChannels() {
     return request("/admin/channels").then((result) => result.channels);
 }
+export function listProtocols() {
+    return request("/admin/protocols").then((result) => result.protocols);
+}
 export function createChannel(input) {
     return request("/admin/channels", { method: "POST", body: JSON.stringify(input) }).then((result) => result.channel);
 }

@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS model_channels (
     name text NOT NULL,
     base_url text NOT NULL,
     protocol text NOT NULL DEFAULT 'openai',
+    advanced_config jsonb NOT NULL DEFAULT '{}'::jsonb,
     api_key_ciphertext text NOT NULL DEFAULT '',
     enabled boolean NOT NULL DEFAULT false,
     last_test_status text NOT NULL DEFAULT 'untested',
@@ -85,7 +86,7 @@ CREATE TABLE IF NOT EXISTS model_channels (
     last_tested_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('openai')),
+    CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'custom', 'compatible')),
     CONSTRAINT model_channels_test_status_check CHECK (last_test_status IN ('untested', 'success', 'failed'))
 );
 
@@ -99,14 +100,23 @@ CREATE TABLE IF NOT EXISTS channel_models (
     sort_order integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT channel_models_capability_check CHECK (capability IN ('image')),
+    CONSTRAINT channel_models_capability_check CHECK (capability IN ('text', 'image', 'video', 'audio')),
     CONSTRAINT channel_models_sort_order_check CHECK (sort_order >= 0)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS channel_models_model_id_unique_lower ON channel_models (lower(model_id));
+DROP INDEX IF EXISTS channel_models_model_id_unique_lower;
+CREATE UNIQUE INDEX IF NOT EXISTS channel_models_channel_model_unique_lower ON channel_models (channel_id, lower(model_id));
 CREATE INDEX IF NOT EXISTS channel_models_channel_sort_idx ON channel_models (channel_id, sort_order ASC, created_at ASC);
 
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS channel_id uuid REFERENCES model_channels(id) ON DELETE SET NULL;
+
+ALTER TABLE model_channels ADD COLUMN IF NOT EXISTS advanced_config jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE model_channels DROP CONSTRAINT IF EXISTS model_channels_protocol_check;
+ALTER TABLE model_channels ADD CONSTRAINT model_channels_protocol_check CHECK (protocol IN ('auto', 'openai', 'yumeng', 'gemini', 'sub2api', 'newapi', 'vozeb-recommended', 'globalaiopc', 'seedance', 'stable-diffusion', 'volcengine-video', 'seedance-special', 'custom', 'compatible'));
+ALTER TABLE channel_models DROP CONSTRAINT IF EXISTS channel_models_capability_check;
+ALTER TABLE channel_models ADD CONSTRAINT channel_models_capability_check CHECK (capability IN ('text', 'image', 'video', 'audio'));
+DROP INDEX IF EXISTS channel_models_model_id_unique_lower;
+CREATE UNIQUE INDEX IF NOT EXISTS channel_models_channel_model_unique_lower ON channel_models (channel_id, lower(model_id));
 
 CREATE INDEX IF NOT EXISTS generation_tasks_status_created_idx ON generation_tasks (status, created_at ASC);
 CREATE INDEX IF NOT EXISTS generation_tasks_user_created_idx ON generation_tasks (user_id, created_at DESC);

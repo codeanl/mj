@@ -2,6 +2,7 @@ package modelchannels
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -27,7 +28,7 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 
 func (repository *Repository) List(ctx context.Context) ([]Channel, error) {
 	rows, err := repository.pool.Query(ctx, `
-		SELECT id::text, name, base_url, protocol, api_key_ciphertext, enabled,
+		SELECT id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
 		       last_test_status, last_test_message, last_tested_at, created_at, updated_at
 		FROM model_channels
 		ORDER BY created_at ASC, id ASC
@@ -66,7 +67,7 @@ func (repository *Repository) List(ctx context.Context) ([]Channel, error) {
 
 func (repository *Repository) Find(ctx context.Context, id string) (Channel, error) {
 	channel, err := scanChannel(repository.pool.QueryRow(ctx, `
-		SELECT id::text, name, base_url, protocol, api_key_ciphertext, enabled,
+		SELECT id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
 		       last_test_status, last_test_message, last_tested_at, created_at, updated_at
 		FROM model_channels WHERE id = $1
 	`, id))
@@ -82,12 +83,16 @@ func (repository *Repository) Find(ctx context.Context, id string) (Channel, err
 
 func (repository *Repository) Create(ctx context.Context, input ChannelInput, encryptedKey string) (Channel, error) {
 	id := uuid.NewString()
+	advanced, err := json.Marshal(input.AdvancedConfig)
+	if err != nil {
+		return Channel{}, err
+	}
 	channel, err := scanChannel(repository.pool.QueryRow(ctx, `
-		INSERT INTO model_channels (id, name, base_url, protocol, api_key_ciphertext, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id::text, name, base_url, protocol, api_key_ciphertext, enabled,
+		INSERT INTO model_channels (id, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+		RETURNING id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
 		          last_test_status, last_test_message, last_tested_at, created_at, updated_at
-	`, id, input.Name, input.BaseURL, input.Protocol, encryptedKey, input.Enabled))
+	`, id, input.Name, input.BaseURL, input.Protocol, advanced, encryptedKey, input.Enabled))
 	if err != nil {
 		return Channel{}, err
 	}
@@ -96,15 +101,19 @@ func (repository *Repository) Create(ctx context.Context, input ChannelInput, en
 }
 
 func (repository *Repository) Update(ctx context.Context, id string, input ChannelInput, encryptedKey *string) (Channel, error) {
+	advanced, err := json.Marshal(input.AdvancedConfig)
+	if err != nil {
+		return Channel{}, err
+	}
 	row := repository.pool.QueryRow(ctx, `
 		UPDATE model_channels
-		SET name = $2, base_url = $3, protocol = $4,
-		    api_key_ciphertext = CASE WHEN $5::boolean THEN $6 ELSE api_key_ciphertext END,
-		    enabled = $7, updated_at = now()
+		SET name = $2, base_url = $3, protocol = $4, advanced_config = $5::jsonb,
+		    api_key_ciphertext = CASE WHEN $6::boolean THEN $7 ELSE api_key_ciphertext END,
+		    enabled = $8, updated_at = now()
 		WHERE id = $1
-		RETURNING id::text, name, base_url, protocol, api_key_ciphertext, enabled,
+		RETURNING id::text, name, base_url, protocol, advanced_config, api_key_ciphertext, enabled,
 		          last_test_status, last_test_message, last_tested_at, created_at, updated_at
-	`, id, input.Name, input.BaseURL, input.Protocol, encryptedKey != nil, stringValue(encryptedKey), input.Enabled)
+	`, id, input.Name, input.BaseURL, input.Protocol, advanced, encryptedKey != nil, stringValue(encryptedKey), input.Enabled)
 	channel, err := scanChannel(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Channel{}, ErrChannelNotFound
@@ -176,18 +185,18 @@ func (repository *Repository) DeleteModel(ctx context.Context, channelID, id str
 	return nil
 }
 
-func (repository *Repository) UpsertDiscoveredModels(ctx context.Context, channelID string, modelIDs []string) error {
+func (repository *Repository) UpsertDiscoveredModels(ctx context.Context, channelID string, models []BuiltInModel) error {
 	batch := &pgx.Batch{}
-	for index, modelID := range modelIDs {
+	for index, model := range models {
 		batch.Queue(`
 			INSERT INTO channel_models (channel_id, model_id, display_name, capability, enabled, sort_order)
-			VALUES ($1, $2, $2, 'image', true, $3)
-			ON CONFLICT (lower(model_id)) DO UPDATE SET updated_at = now()
-		`, channelID, modelID, index)
+			VALUES ($1, $2, $3, $4, true, $5)
+			ON CONFLICT (channel_id, lower(model_id)) DO UPDATE SET display_name = EXCLUDED.display_name, capability = EXCLUDED.capability, updated_at = now()
+		`, channelID, model.ID, model.Label, model.Capability, index)
 	}
 	results := repository.pool.SendBatch(ctx, batch)
 	defer results.Close()
-	for range modelIDs {
+	for range models {
 		if _, err := results.Exec(); err != nil {
 			return modelConflict(err)
 		}
@@ -195,15 +204,20 @@ func (repository *Repository) UpsertDiscoveredModels(ctx context.Context, channe
 	return nil
 }
 
-func (repository *Repository) ListPublicModels(ctx context.Context) ([]PublicModel, error) {
+func (repository *Repository) ListPublicModels(ctx context.Context, capability string) ([]PublicModel, error) {
 	rows, err := repository.pool.Query(ctx, `
-		SELECT model.model_id, model.display_name, model.capability
-		FROM channel_models model
-		JOIN model_channels channel ON channel.id = model.channel_id
-		WHERE channel.enabled = true AND model.enabled = true AND model.capability = 'image'
-		  AND channel.api_key_ciphertext <> ''
-		ORDER BY model.sort_order ASC, model.created_at ASC
-	`)
+		SELECT selected.model_id, selected.display_name, selected.capability
+		FROM (
+			SELECT DISTINCT ON (lower(model.model_id)) model.model_id, model.display_name, model.capability,
+			       model.sort_order, model.created_at
+			FROM channel_models model
+			JOIN model_channels channel ON channel.id = model.channel_id
+			WHERE channel.enabled = true AND model.enabled = true AND ($1 = '' OR model.capability = $1)
+			  AND (channel.api_key_ciphertext <> '' OR channel.protocol = 'stable-diffusion')
+			ORDER BY lower(model.model_id), model.sort_order ASC, channel.created_at ASC, model.created_at ASC
+		) selected
+		ORDER BY selected.sort_order ASC, selected.created_at ASC, selected.model_id ASC
+	`, capability)
 	if err != nil {
 		return nil, err
 	}
@@ -221,25 +235,34 @@ func (repository *Repository) ListPublicModels(ctx context.Context) ([]PublicMod
 
 func (repository *Repository) ResolveImageModel(ctx context.Context, channelID, modelID string) (Channel, Model, error) {
 	row := repository.pool.QueryRow(ctx, `
-		SELECT channel.id::text, channel.name, channel.base_url, channel.protocol, channel.api_key_ciphertext, channel.enabled,
+		SELECT channel.id::text, channel.name, channel.base_url, channel.protocol, channel.advanced_config, channel.api_key_ciphertext, channel.enabled,
 		       channel.last_test_status, channel.last_test_message, channel.last_tested_at, channel.created_at, channel.updated_at,
 		       model.id::text, model.channel_id::text, model.model_id, model.display_name, model.capability, model.enabled, model.sort_order, model.created_at, model.updated_at
 		FROM channel_models model
 		JOIN model_channels channel ON channel.id = model.channel_id
 		WHERE lower(model.model_id) = lower($1)
-		  AND ($2 = '' OR channel.id = $2::uuid)
+		  AND ($2 = '' OR channel.id = NULLIF($2, '')::uuid)
 		  AND channel.enabled = true AND model.enabled = true AND model.capability = 'image'
 		LIMIT 1
 	`, modelID, channelID)
+	channel, model, err := scanResolvedModel(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Channel{}, Model{}, ErrModelNotFound
+	}
+	return channel, model, err
+}
+
+func scanResolvedModel(row rowScanner) (Channel, Model, error) {
 	var channel Channel
 	var model Model
+	var advanced []byte
 	err := row.Scan(
-		&channel.ID, &channel.Name, &channel.BaseURL, &channel.Protocol, &channel.apiKeyCiphertext, &channel.Enabled,
+		&channel.ID, &channel.Name, &channel.BaseURL, &channel.Protocol, &advanced, &channel.apiKeyCiphertext, &channel.Enabled,
 		&channel.LastTestStatus, &channel.LastTestMessage, &channel.LastTestedAt, &channel.CreatedAt, &channel.UpdatedAt,
 		&model.ID, &model.ChannelID, &model.ModelID, &model.DisplayName, &model.Capability, &model.Enabled, &model.SortOrder, &model.CreatedAt, &model.UpdatedAt,
 	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Channel{}, Model{}, ErrModelNotFound
+	if err == nil {
+		err = json.Unmarshal(advanced, &channel.AdvancedConfig)
 	}
 	return channel, model, err
 }
@@ -248,7 +271,7 @@ func (repository *Repository) listModels(ctx context.Context, channelID string) 
 	rows, err := repository.pool.Query(ctx, `
 		SELECT id::text, channel_id::text, model_id, display_name, capability, enabled, sort_order, created_at, updated_at
 		FROM channel_models
-		WHERE ($1 = '' OR channel_id = $1::uuid)
+		WHERE ($1 = '' OR channel_id = NULLIF($1, '')::uuid)
 		ORDER BY sort_order ASC, created_at ASC, id ASC
 	`, channelID)
 	if err != nil {
@@ -272,10 +295,14 @@ type rowScanner interface {
 
 func scanChannel(row rowScanner) (Channel, error) {
 	var channel Channel
+	var advanced []byte
 	err := row.Scan(
-		&channel.ID, &channel.Name, &channel.BaseURL, &channel.Protocol, &channel.apiKeyCiphertext, &channel.Enabled,
+		&channel.ID, &channel.Name, &channel.BaseURL, &channel.Protocol, &advanced, &channel.apiKeyCiphertext, &channel.Enabled,
 		&channel.LastTestStatus, &channel.LastTestMessage, &channel.LastTestedAt, &channel.CreatedAt, &channel.UpdatedAt,
 	)
+	if err == nil {
+		err = json.Unmarshal(advanced, &channel.AdvancedConfig)
+	}
 	return channel, err
 }
 

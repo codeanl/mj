@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue"
 import { useDebounceFn, useIntervalFn } from "@vueuse/core"
-import { ElMessage } from "element-plus"
 import {
   ChevronLeft,
   ChevronRight,
@@ -20,6 +19,7 @@ import {
 
 import * as assetApi from "@/services/assets"
 import { apiErrorMessage } from "@/services/http"
+import { notification } from "@/services/notifications"
 
 type AssetFilter = "all" | assetApi.AssetType
 
@@ -90,7 +90,7 @@ async function loadAssets(options: { silent?: boolean } = {}) {
     }
     await loadPreviewUrls(result.items, sequence)
   } catch (error) {
-    if (sequence === loadSequence) ElMessage.error(apiErrorMessage(error, "素材加载失败"))
+    if (sequence === loadSequence) notification.error(apiErrorMessage(error, "素材加载失败"))
   } finally {
     if (sequence === loadSequence) {
       loading.value = false
@@ -153,13 +153,13 @@ async function handleFileSelection(event: Event) {
   uploading.value = true
   try {
     await assetApi.uploadAsset(file)
-    ElMessage.success("素材上传成功")
+    notification.success("素材上传成功")
     activeFilter.value = "all"
     searchKeyword.value = ""
     if (currentPage.value !== 1) currentPage.value = 1
     else await loadAssets()
   } catch (error) {
-    ElMessage.error(apiErrorMessage(error, "素材上传失败"))
+    notification.error(apiErrorMessage(error, "素材上传失败"))
   } finally {
     uploading.value = false
     input.value = ""
@@ -169,7 +169,7 @@ async function handleFileSelection(event: Event) {
 function openAsset(asset: assetApi.Asset) {
   if (asset.status !== "ready") return
   if (!previewUrls.value[asset.id]) {
-    ElMessage.warning("素材预览暂不可用")
+    notification.warning("素材预览暂不可用")
     return
   }
   selectedAsset.value = asset
@@ -185,7 +185,7 @@ async function downloadAsset(asset: assetApi.Asset) {
     link.click()
     URL.revokeObjectURL(url)
   } catch (error) {
-    ElMessage.error(apiErrorMessage(error, "素材下载失败"))
+    notification.error(apiErrorMessage(error, "素材下载失败"))
   }
 }
 

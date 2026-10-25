@@ -89,7 +89,7 @@ var imageDimensions = map[string]map[string]struct {
 }
 
 func (service *Service) Capabilities(ctx context.Context) (Capabilities, error) {
-	publicModels, err := service.channels.PublicModels(ctx)
+	publicModels, err := service.channels.PublicModels(ctx, "image")
 	if err != nil {
 		return Capabilities{}, err
 	}

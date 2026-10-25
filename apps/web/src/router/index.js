@@ -1,25 +1,20 @@
 import { createRouter, createWebHistory } from "vue-router";
-import AppLayout from "@/layouts/AppLayout.vue";
-import HomeView from "@/views/HomeView.vue";
-import AssetsView from "@/views/AssetsView.vue";
-import LoginView from "@/views/LoginView.vue";
-import RegisterView from "@/views/RegisterView.vue";
 import { useAuthStore } from "@/stores/auth";
 const workspaceRoutes = [
-    { path: "", name: "home", component: HomeView, meta: { title: "创作" } },
-    { path: "assets", name: "assets", component: AssetsView, meta: { title: "素材" } },
+    { path: "", name: "home", component: () => import("@/views/HomeView.vue"), meta: { title: "创作" } },
+    { path: "assets", name: "assets", component: () => import("@/views/AssetsView.vue"), meta: { title: "素材" } },
 ];
 const router = createRouter({
     history: createWebHistory(),
     routes: [
         {
             path: "/",
-            component: AppLayout,
+            component: () => import("@/layouts/AppLayout.vue"),
             meta: { requiresAuth: true },
             children: workspaceRoutes,
         },
-        { path: "/login", name: "login", component: LoginView, meta: { title: "登录", guestOnly: true } },
-        { path: "/register", name: "register", component: RegisterView, meta: { title: "注册", guestOnly: true } },
+        { path: "/login", name: "login", component: () => import("@/views/LoginView.vue"), meta: { title: "登录", guestOnly: true } },
+        { path: "/register", name: "register", component: () => import("@/views/RegisterView.vue"), meta: { title: "注册", guestOnly: true } },
         { path: "/:pathMatch(.*)*", redirect: "/" },
     ],
 });

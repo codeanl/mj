@@ -5,7 +5,7 @@ export type ChannelModel = {
   channelId: string
   modelId: string
   displayName: string
-  capability: "image"
+  capability: ModelCapability
   enabled: boolean
   sortOrder: number
   createdAt: string
@@ -16,7 +16,8 @@ export type ModelChannel = {
   id: string
   name: string
   baseUrl: string
-  protocol: "openai"
+  protocol: ChannelProtocol
+  advancedConfig: AdvancedConfig
   enabled: boolean
   hasApiKey: boolean
   apiKeyMasked: string
@@ -31,18 +32,65 @@ export type ModelChannel = {
 export type ChannelInput = {
   name: string
   baseUrl: string
-  protocol: "openai"
+  protocol: ChannelProtocol
   apiKey?: string
   clearApiKey?: boolean
   enabled: boolean
+  advancedConfig: AdvancedConfig
 }
 
 export type ModelInput = {
   modelId: string
   displayName: string
-  capability: "image"
+  capability: ModelCapability
   enabled: boolean
   sortOrder: number
+}
+
+export type ModelCapability = "text" | "image" | "video" | "audio"
+export type ChannelProtocol = "auto" | "openai" | "yumeng" | "gemini" | "sub2api" | "newapi" | "vozeb-recommended" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible"
+export type AuthMode = "none" | "bearer" | "x-api-key" | "custom-header"
+
+export type OperationConfig = {
+  createPath?: string
+  editPath?: string
+  imageToVideoPath?: string
+  queryPath?: string
+  cancelPath?: string
+  cancelMethod?: string
+  requestTemplate?: string
+  resultField?: string
+  statusField?: string
+  durationRange?: string
+  referenceRule?: string
+  supportsReferenceImage?: boolean
+  supportsReferenceVideo?: boolean
+  supportsReferenceAudio?: boolean
+}
+
+export type AdvancedConfig = OperationConfig & {
+  apiFormat: "openai" | "gemini"
+  authMode: AuthMode
+  authHeader?: string
+  authPrefix?: string
+  documentationUrl?: string
+  modelCatalogPaths: string[]
+  operationConfigs?: Partial<Record<ModelCapability, OperationConfig>>
+}
+
+export type ProtocolDefinition = {
+  id: ChannelProtocol
+  label: string
+  description: string
+  apiFormat: "openai" | "gemini"
+  authMode: AuthMode
+  defaultBaseUrl?: string
+  modelCatalogPaths: string[]
+  capabilities: ModelCapability[]
+  operations: Partial<Record<ModelCapability, OperationConfig>>
+  builtInModels?: Array<{ id: string; label: string; capability: ModelCapability }>
+  strict: boolean
+  advanced: boolean
 }
 
 export type ConnectionResult = {
@@ -53,6 +101,10 @@ export type ConnectionResult = {
 
 export function listChannels() {
   return request<{ channels: ModelChannel[] }>("/admin/channels").then((result) => result.channels)
+}
+
+export function listProtocols() {
+  return request<{ protocols: ProtocolDefinition[] }>("/admin/protocols").then((result) => result.protocols)
 }
 
 export function createChannel(input: ChannelInput) {
