@@ -17,6 +17,11 @@ export type GenerationTask = {
   createdAt: string
 }
 
+export type ImageGenerationBatch = {
+  tasks: GenerationTask[]
+  pointsRemaining: number
+}
+
 export type GenerationOption = {
   value: string
   label: string
@@ -44,8 +49,8 @@ export async function getGenerationCapabilities() {
   return response.data.data
 }
 
-export async function createImageGeneration(input: { prompt: string; model: string; size: string; quality: string }) {
-  const response = await http.post<ApiResponse<GenerationTask>>("/generations/images", input)
+export async function createImageGeneration(input: { prompt: string; model: string; size: string; quality: string; count: number; referenceAssetIds?: string[] }) {
+	const response = await http.post<ApiResponse<ImageGenerationBatch>>("/generations/images", input)
   return response.data.data
 }
 

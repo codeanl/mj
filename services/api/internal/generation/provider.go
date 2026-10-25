@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,7 +26,7 @@ type GeneratedImage struct {
 }
 
 type ImageProvider interface {
-	Generate(context.Context, Task, modelchannels.ResolvedModel) (GeneratedImage, error)
+	Generate(context.Context, Task, modelchannels.ResolvedModel, []*ReferenceImage) (GeneratedImage, error)
 }
 
 type OpenAIImageProvider struct {
@@ -39,10 +41,11 @@ func NewOpenAIImageProvider(timeout time.Duration, maxBytes int64) *OpenAIImageP
 	}
 }
 
-func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task, selected modelchannels.ResolvedModel) (GeneratedImage, error) {
+func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task, selected modelchannels.ResolvedModel, references []*ReferenceImage) (GeneratedImage, error) {
 	if selected.BaseURL == "" || selected.UpstreamModel == "" || (selected.APIKey == "" && selected.AdvancedConfig.AuthMode != "none") {
 		return GeneratedImage{}, ErrProviderUnavailable
 	}
+	operation := imageOperation(selected.AdvancedConfig)
 	requestBody := map[string]interface{}{"model": selected.UpstreamModel, "prompt": task.Prompt, "n": 1, "size": task.providerSize, "quality": task.providerQuality}
 	if selected.Protocol == "stable-diffusion" {
 		requestBody = map[string]interface{}{
@@ -50,20 +53,56 @@ func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task, se
 			"override_settings": map[string]string{"sd_model_checkpoint": selected.UpstreamModel}, "override_settings_restore_afterwards": true,
 		}
 	}
-	payload, err := json.Marshal(requestBody)
-	if err != nil {
-		return GeneratedImage{}, err
-	}
-	path := selected.AdvancedConfig.CreatePath
+	path := operation.CreatePath
 	if path == "" {
 		path = "/images/generations"
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(selected.BaseURL, "/")+"/"+strings.TrimLeft(path, "/"), bytes.NewReader(payload))
+	contentType := "application/json"
+	var body io.Reader
+	if len(references) > 0 {
+		if !operation.SupportsReferenceImage {
+			return GeneratedImage{}, errors.New("selected image protocol does not support reference images")
+		}
+		switch selected.Protocol {
+		case "stable-diffusion":
+			requestBody["init_images"] = referenceBase64Values(references, false)
+			if operation.EditPath != "" {
+				path = operation.EditPath
+			}
+		case "sub2api":
+			requestBody["image_urls"] = referenceBase64Values(references, true)
+		case "yumeng":
+			requestBody["reference_images"] = referenceBase64Values(references, true)
+			if operation.EditPath != "" {
+				path = operation.EditPath
+			}
+		default:
+			multipartBody, multipartType, err := buildImageEditMultipart(task, selected.UpstreamModel, references)
+			if err != nil {
+				return GeneratedImage{}, err
+			}
+			body = multipartBody
+			contentType = multipartType
+			if operation.EditPath != "" {
+				path = operation.EditPath
+			} else {
+				path = "/images/edits"
+			}
+		}
+	}
+	if body == nil {
+		payload, err := json.Marshal(requestBody)
+		if err != nil {
+			return GeneratedImage{}, err
+		}
+		body = bytes.NewReader(payload)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(selected.BaseURL, "/")+"/"+strings.TrimLeft(path, "/"), body)
 	if err != nil {
 		return GeneratedImage{}, err
 	}
 	applyProviderAuth(request, selected)
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", contentType)
 	response, err := provider.client.Do(request)
 	if err != nil {
 		return GeneratedImage{}, fmt.Errorf("image provider request failed: %w", err)
@@ -114,6 +153,64 @@ func (provider *OpenAIImageProvider) Generate(ctx context.Context, task Task, se
 		return GeneratedImage{}, errors.New("image provider returned neither b64_json nor url")
 	}
 	return provider.download(ctx, result.Data[0].URL, selected)
+}
+
+func imageOperation(advanced modelchannels.AdvancedConfig) modelchannels.OperationConfig {
+	operation := advanced.OperationConfigs["image"]
+	if advanced.CreatePath != "" {
+		operation.CreatePath = advanced.CreatePath
+	}
+	if advanced.EditPath != "" {
+		operation.EditPath = advanced.EditPath
+	}
+	if advanced.SupportsReferenceImage {
+		operation.SupportsReferenceImage = true
+	}
+	return operation
+}
+
+func referenceBase64Values(references []*ReferenceImage, dataURL bool) []string {
+	values := make([]string, 0, len(references))
+	for _, reference := range references {
+		value := base64.StdEncoding.EncodeToString(reference.Content)
+		if dataURL {
+			value = "data:" + reference.MimeType + ";base64," + value
+		}
+		values = append(values, value)
+	}
+	return values
+}
+
+func buildImageEditMultipart(task Task, model string, references []*ReferenceImage) (*bytes.Buffer, string, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	fields := map[string]string{
+		"model": model, "prompt": task.Prompt, "n": "1", "size": task.providerSize, "quality": task.providerQuality,
+	}
+	for name, value := range fields {
+		if value != "" {
+			if err := writer.WriteField(name, value); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+	for index, reference := range references {
+		name := filepath.Base(reference.Name)
+		if name == "." || name == "" {
+			name = fmt.Sprintf("reference-%d.png", index+1)
+		}
+		part, err := writer.CreateFormFile("image", name)
+		if err != nil {
+			return nil, "", err
+		}
+		if _, err := part.Write(reference.Content); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return body, writer.FormDataContentType(), nil
 }
 
 func applyProviderAuth(request *http.Request, selected modelchannels.ResolvedModel) {

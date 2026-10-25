@@ -15,6 +15,8 @@ const (
 	DefaultImageRatio      = "16:9"
 	DefaultImageResolution = "2K"
 	ProviderImageQuality   = "high"
+	MaxImageCount          = 4
+	MaxReferenceImages     = 3
 )
 
 type Task struct {
@@ -32,7 +34,9 @@ type Task struct {
 	ErrorMessage        string     `json:"errorMessage,omitempty"`
 	PointsCost          float64    `json:"pointsCost"`
 	PointsRemaining     float64    `json:"pointsRemaining"`
+	ReferenceAssetIDs   []string   `json:"referenceAssetIds,omitempty"`
 	CreatedAt           time.Time  `json:"createdAt"`
+	userID              string
 	pointsTransactionID string
 	pointsRefunded      bool
 	providerSize        string
@@ -51,11 +55,30 @@ type ImageOptions struct {
 }
 
 type CreateImageInput struct {
-	UserID  string
-	Prompt  string
-	Model   string
-	Size    string
-	Quality string
+	UserID            string
+	Prompt            string
+	Model             string
+	Size              string
+	Quality           string
+	Count             int
+	ReferenceAssetIDs []string
+}
+
+type ImageBatch struct {
+	Tasks           []Task  `json:"tasks"`
+	PointsRemaining float64 `json:"pointsRemaining"`
+}
+
+type ReferenceImage struct {
+	Content  []byte
+	MimeType string
+	Name     string
+}
+
+type storedReference struct {
+	StorageKey   string
+	OriginalName string
+	MimeType     string
 }
 
 type Option struct {

@@ -24,23 +24,26 @@ func (handlers generationHandlers) CreateImage(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var input struct {
-		Prompt  string `json:"prompt"`
-		Model   string `json:"model"`
-		Size    string `json:"size"`
-		Quality string `json:"quality"`
+		Prompt            string   `json:"prompt"`
+		Model             string   `json:"model"`
+		Size              string   `json:"size"`
+		Quality           string   `json:"quality"`
+		Count             int      `json:"count"`
+		ReferenceAssetIDs []string `json:"referenceAssetIds"`
 	}
 	if err := decodeJSON(r, &input); err != nil {
 		writeJSON(w, http.StatusBadRequest, response{Code: 40021, Msg: "请求参数格式不正确"})
 		return
 	}
-	task, err := handlers.service.CreateImage(r.Context(), generation.CreateImageInput{
+	batch, err := handlers.service.CreateImage(r.Context(), generation.CreateImageInput{
 		UserID: user.ID, Prompt: input.Prompt, Model: input.Model, Size: input.Size, Quality: input.Quality,
+		Count: input.Count, ReferenceAssetIDs: input.ReferenceAssetIDs,
 	})
 	if err != nil {
 		handlers.writeGenerationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, response{Code: 0, Data: task, Msg: "生成任务已创建"})
+	writeJSON(w, http.StatusAccepted, response{Code: 0, Data: batch, Msg: "生成任务已创建"})
 }
 
 func (handlers generationHandlers) GetCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +79,10 @@ func (handlers generationHandlers) writeGenerationError(w http.ResponseWriter, e
 		writeJSON(w, http.StatusBadRequest, response{Code: 40022, Msg: "提示词长度应为 2-2000 个字符"})
 	case errors.Is(err, generation.ErrUnsupportedOptions):
 		writeJSON(w, http.StatusBadRequest, response{Code: 40023, Msg: "所选模型、画面比例或分辨率不受支持"})
+	case errors.Is(err, generation.ErrInvalidImageCount):
+		writeJSON(w, http.StatusBadRequest, response{Code: 40024, Msg: "每次最多生成 4 张图片"})
+	case errors.Is(err, generation.ErrInvalidReference):
+		writeJSON(w, http.StatusBadRequest, response{Code: 40025, Msg: "参考图最多 3 张，且必须是当前用户的有效图片"})
 	case errors.Is(err, generation.ErrProviderUnavailable):
 		writeJSON(w, http.StatusServiceUnavailable, response{Code: 50311, Msg: "图片生成渠道尚未配置"})
 	case errors.Is(err, generation.ErrInsufficientPoints):

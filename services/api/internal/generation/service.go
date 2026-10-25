@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"nova-creator-platform/services/api/internal/modelchannels"
 	"nova-creator-platform/services/api/internal/points"
 )
@@ -13,6 +15,8 @@ import (
 var ErrInvalidPrompt = errors.New("invalid generation prompt")
 var ErrUnsupportedOptions = errors.New("unsupported generation options")
 var ErrInsufficientPoints = errors.New("insufficient points")
+var ErrInvalidImageCount = errors.New("invalid image count")
+var ErrInvalidReference = errors.New("invalid reference image")
 
 type Service struct {
 	repository *Repository
@@ -24,28 +28,63 @@ func NewService(repository *Repository, channels *modelchannels.Service, pointsS
 	return &Service{repository: repository, channels: channels, points: pointsService}
 }
 
-func (service *Service) CreateImage(ctx context.Context, input CreateImageInput) (Task, error) {
+func (service *Service) CreateImage(ctx context.Context, input CreateImageInput) (ImageBatch, error) {
 	prompt := strings.TrimSpace(input.Prompt)
 	if input.UserID == "" || utf8.RuneCountInString(prompt) < 2 || utf8.RuneCountInString(prompt) > 2000 {
-		return Task{}, ErrInvalidPrompt
+		return ImageBatch{}, ErrInvalidPrompt
+	}
+	count, ok := normalizeImageCount(input.Count)
+	if !ok {
+		return ImageBatch{}, ErrInvalidImageCount
+	}
+	referenceAssetIDs, ok := normalizeReferenceAssetIDs(input.ReferenceAssetIDs)
+	if !ok {
+		return ImageBatch{}, ErrInvalidReference
 	}
 	selected, err := service.channels.ResolveImageModel(ctx, "", input.Model)
 	if err != nil {
 		if errors.Is(err, modelchannels.ErrChannelDisabled) {
-			return Task{}, ErrProviderUnavailable
+			return ImageBatch{}, ErrProviderUnavailable
 		}
-		return Task{}, err
+		return ImageBatch{}, err
 	}
 	options, ok := resolveImageOptions(input, selected.UpstreamModel)
 	if !ok {
-		return Task{}, ErrUnsupportedOptions
+		return ImageBatch{}, ErrUnsupportedOptions
 	}
 	options.ChannelID = selected.ChannelID
 	cost, err := service.points.GenerationCost(ctx, input.Model, "image", options.Resolution)
 	if err != nil {
-		return Task{}, err
+		return ImageBatch{}, err
 	}
-	return service.repository.CreateImage(ctx, input.UserID, prompt, options, cost)
+	return service.repository.CreateImages(ctx, input.UserID, prompt, options, count, referenceAssetIDs, cost)
+}
+
+func normalizeReferenceAssetIDs(values []string) ([]string, bool) {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, err := uuid.Parse(value); err != nil {
+			return nil, false
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result, len(result) <= MaxReferenceImages
+}
+
+func normalizeImageCount(count int) (int, bool) {
+	if count == 0 {
+		return 1, true
+	}
+	return count, count >= 1 && count <= MaxImageCount
 }
 
 func resolveImageOptions(input CreateImageInput, configuredModel string) (ImageOptions, bool) {

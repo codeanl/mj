@@ -32,3 +32,35 @@ func TestImageOptionsCoverCommonRatiosAtOneAndTwoK(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeImageCountDefaultsToOneAndCapsAtFour(t *testing.T) {
+	for input, expected := range map[int]int{0: 1, 1: 1, 2: 2, 4: 4} {
+		actual, ok := normalizeImageCount(input)
+		if !ok || actual != expected {
+			t.Fatalf("count %d normalized to %d, %v", input, actual, ok)
+		}
+	}
+	for _, input := range []int{-1, 5} {
+		if _, ok := normalizeImageCount(input); ok {
+			t.Fatalf("expected count %d to be rejected", input)
+		}
+	}
+}
+
+func TestNormalizeReferenceAssetIDsAllowsThreeUniqueImages(t *testing.T) {
+	values := []string{
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		"33333333-3333-4333-8333-333333333333",
+	}
+	actual, ok := normalizeReferenceAssetIDs(append(values, values[0]))
+	if !ok || len(actual) != 3 {
+		t.Fatalf("unexpected references: %#v, %v", actual, ok)
+	}
+	if _, ok := normalizeReferenceAssetIDs(append(values, "44444444-4444-4444-8444-444444444444")); ok {
+		t.Fatal("expected four reference images to be rejected")
+	}
+	if _, ok := normalizeReferenceAssetIDs([]string{"not-a-uuid"}); ok {
+		t.Fatal("expected invalid reference ID to be rejected")
+	}
+}

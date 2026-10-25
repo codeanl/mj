@@ -9,7 +9,9 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"nova-creator-platform/services/api/internal/assets"
@@ -70,7 +72,30 @@ func (worker *Worker) process(ctx context.Context, task Task) {
 		worker.fail(ctx, task, fmt.Errorf("generation channel unavailable: %w", err))
 		return
 	}
-	generated, err := worker.provider.Generate(ctx, task, selected)
+	var references []*ReferenceImage
+	if len(task.ReferenceAssetIDs) > 0 {
+		storedReferences, err := worker.repository.GetReferences(ctx, task)
+		if err != nil {
+			worker.fail(ctx, task, fmt.Errorf("reference image unavailable: %w", err))
+			return
+		}
+		references = make([]*ReferenceImage, 0, len(storedReferences))
+		for _, stored := range storedReferences {
+			file, err := worker.storage.Open(stored.StorageKey)
+			if err != nil {
+				worker.fail(ctx, task, fmt.Errorf("reference image storage unavailable: %w", err))
+				return
+			}
+			content, readErr := io.ReadAll(file)
+			closeErr := file.Close()
+			if readErr != nil || closeErr != nil || len(content) == 0 || !strings.HasPrefix(stored.MimeType, "image/") {
+				worker.fail(ctx, task, errors.New("reference image content is invalid"))
+				return
+			}
+			references = append(references, &ReferenceImage{Content: content, MimeType: stored.MimeType, Name: stored.OriginalName})
+		}
+	}
+	generated, err := worker.provider.Generate(ctx, task, selected, references)
 	if err != nil {
 		worker.fail(ctx, task, err)
 		return

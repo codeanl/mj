@@ -12,9 +12,11 @@ import {
   Moon,
   Paperclip,
   Play,
+  Plus,
   Sparkles,
   Sun,
   Video,
+  X,
 } from "@lucide/vue"
 import { useAuthStore } from "@/stores/auth"
 import * as assetApi from "@/services/assets"
@@ -56,6 +58,10 @@ const capabilities = ref<GenerationCapabilities>(defaultCapabilities)
 const selectedModel = ref("")
 const selectedSize = ref("16:9")
 const selectedQuality = ref("2K")
+const selectedCount = ref(1)
+const referenceInput = ref<HTMLInputElement | null>(null)
+type ReferenceDraft = { key: string; file: File; previewUrl: string; assetId: string }
+const references = ref<ReferenceDraft[]>([])
 const darkMode = ref(false)
 const creating = ref(false)
 const modelsLoading = ref(true)
@@ -112,31 +118,33 @@ async function startCreation() {
   creating.value = true
   try {
     const submittedPrompt = prompt.value.trim()
-    const task = await createImageGeneration({
+	for (const reference of references.value) {
+	  if (!reference.assetId) {
+		const uploaded = await assetApi.uploadAsset(reference.file, "创作参考图")
+		reference.assetId = uploaded.id
+	  }
+    }
+	const referenceAssetIds = references.value.map((reference) => reference.assetId)
+    const batch = await createImageGeneration({
       prompt: submittedPrompt,
       model: selectedModel.value,
       size: selectedSize.value,
       quality: selectedQuality.value,
+      count: selectedCount.value,
+	  ...(referenceAssetIds.length ? { referenceAssetIds } : {}),
     })
-    const pendingAsset: assetApi.Asset = {
-      id: task.assetId,
-      type: "image",
-      source: "generated",
-      status: "generating",
-      title: submittedPrompt.slice(0, 80),
-      url: "",
-      downloadUrl: "",
-      sizeBytes: 0,
-      width: task.width,
-      height: task.height,
-      createdAt: task.createdAt,
-    }
+    const pendingAssets: assetApi.Asset[] = batch.tasks.map((task) => ({
+      id: task.assetId, type: "image", source: "generated", status: "generating",
+      title: submittedPrompt.slice(0, 80), url: "", downloadUrl: "", sizeBytes: 0,
+      width: task.width, height: task.height, createdAt: task.createdAt,
+    }))
+    const pendingIDs = new Set(pendingAssets.map((asset) => asset.id))
     recentWorks.value = [
-      pendingAsset,
-      ...recentWorks.value.filter((work) => work.id !== task.assetId),
+      ...pendingAssets,
+      ...recentWorks.value.filter((work) => !pendingIDs.has(work.id)),
     ].slice(0, 4)
-    authStore.setPointsBalance(task.pointsRemaining)
-    notification.success(`生成任务已创建：${task.taskId.slice(0, 8)}`)
+    authStore.setPointsBalance(batch.pointsRemaining)
+    notification.success(`${batch.tasks.length} 张图片生成任务已创建`)
     await loadRecentWorks({ silent: true })
   } catch (error) {
     notification.error(apiErrorMessage(error, "图片生成任务创建失败"))
@@ -145,8 +153,42 @@ async function startCreation() {
   }
 }
 
-function openPlaceholder(label: string) {
-  notification.info(`${label} 页面将在下一阶段接入`)
+function chooseReference() {
+  referenceInput.value?.click()
+}
+
+function selectReference(event: Event) {
+  const input = event.target as HTMLInputElement
+	const files = Array.from(input.files || [])
+  input.value = ""
+	if (!files.length) return
+	const supportedTypes = new Set(["image/jpeg", "image/png", "image/webp"])
+	let rejected = false
+	for (const file of files) {
+	  if (references.value.length >= 3) {
+		rejected = true
+		break
+	  }
+	  if (!supportedTypes.has(file.type)) {
+		rejected = true
+		continue
+	  }
+	  const key = `${file.name}:${file.size}:${file.lastModified}`
+	  if (references.value.some((reference) => reference.key === key)) continue
+	  references.value.push({ key, file, previewUrl: URL.createObjectURL(file), assetId: "" })
+  }
+	if (rejected) notification.warning("最多添加 3 张 JPG、PNG 或 WebP 参考图")
+}
+
+function clearReferencePreviews() {
+	references.value.forEach((reference) => URL.revokeObjectURL(reference.previewUrl))
+	references.value = []
+}
+
+function removeReference(key: string) {
+	const reference = references.value.find((item) => item.key === key)
+	if (reference) URL.revokeObjectURL(reference.previewUrl)
+	references.value = references.value.filter((item) => item.key !== key)
 }
 
 function applyCapabilityDefaults() {
@@ -247,6 +289,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (heroIdleHandle !== undefined && "cancelIdleCallback" in window) window.cancelIdleCallback(heroIdleHandle)
   pauseRecentRefresh()
+	clearReferencePreviews()
   revokeRecentPreviewUrls()
 })
 </script>
@@ -290,11 +333,19 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="composer__body">
-          <button class="reference-slot" type="button" @click="openPlaceholder('参考素材')">
-            <Paperclip :size="21" />
-            <strong>添加参考</strong>
-            <span>图片或视频</span>
-          </button>
+		  <div class="reference-slot" :class="{ 'reference-slot--selected': references.length }">
+			<input ref="referenceInput" class="reference-slot__input" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="selectReference" />
+			<button v-if="!references.length" class="reference-slot__pick" type="button" aria-label="添加参考图" @click="chooseReference">
+			  <Paperclip :size="21" /><strong>添加参考</strong><span>最多 3 张</span>
+			</button>
+			<div v-else class="reference-slot__grid">
+			  <div v-for="reference in references" :key="reference.key" class="reference-slot__thumb">
+				<img :src="reference.previewUrl" :alt="reference.file.name" />
+				<button type="button" aria-label="移除参考图" title="移除参考图" @click="removeReference(reference.key)"><X :size="12" /></button>
+			  </div>
+			  <button v-if="references.length < 3" class="reference-slot__add" type="button" aria-label="继续添加参考图" @click="chooseReference"><Plus :size="18" /><span>{{ references.length }}/3</span></button>
+			</div>
+		  </div>
           <div class="composer__input-wrap">
             <textarea v-model="prompt" :placeholder="promptPlaceholder" rows="3" maxlength="1000" />
             <div class="composer__options">
@@ -302,6 +353,7 @@ onBeforeUnmount(() => {
                 <label class="compact-select"><select v-model="selectedModel" aria-label="模型" :disabled="modelsLoading || !currentCapability?.models.length"><option v-if="modelsLoading" value="">加载模型</option><option v-else-if="!currentCapability?.models.length" value="">暂无模型</option><option v-for="option in currentCapability?.models || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
                 <label class="compact-select compact-select--small"><select v-model="selectedSize" aria-label="画面比例" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.sizes || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
                 <label class="compact-select compact-select--small"><select v-model="selectedQuality" aria-label="分辨率" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.qualities || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
+                <label class="compact-select compact-select--count"><select v-model.number="selectedCount" aria-label="生成张数" :disabled="!currentCapability?.enabled"><option v-for="count in 4" :key="count" :value="count">{{ count }}张</option></select><ChevronDown :size="14" /></label>
               </div>
               <button class="create-button" type="button" :disabled="creating || modelsLoading || !selectedModel" @click="startCreation">
                 <LoaderCircle v-if="creating" class="spin" :size="18" />
