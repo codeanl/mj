@@ -23,14 +23,14 @@ import (
 )
 
 func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.Logger, db *pgxpool.Pool, redisClient *redis.Client) http.Handler {
-	authService := auth.NewService(auth.NewPostgresRepository(db), auth.NewTokenManager(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAccessTTL))
-	authHTTP := newAuthHandlers(authService, logger)
-	adminUserHTTP := newAdminUserHandlers(adminusers.NewService(adminusers.NewPostgresRepository(db)), logger)
 	assetStorage, err := assets.NewLocalStorage(cfg.AssetDataDir)
 	if err != nil {
 		panic(err)
 	}
 	assetStorage.ConfigureFFmpeg(cfg.FFmpegPath)
+	authService := auth.NewService(auth.NewPostgresRepository(db), auth.NewTokenManager(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAccessTTL), assetStorage)
+	authHTTP := newAuthHandlers(authService, logger, cfg.AssetMaxBytes)
+	adminUserHTTP := newAdminUserHandlers(adminusers.NewService(adminusers.NewPostgresRepository(db)), logger)
 	assetService := assets.NewService(assets.NewPostgresRepository(db), assetStorage)
 	assetHTTP := newAssetHandlers(assetService, logger, cfg.AssetMaxBytes)
 	adminGenerationService := admingenerations.NewService(admingenerations.NewRepository(db))
@@ -82,6 +82,10 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 		api.Group(func(protected chi.Router) {
 			protected.Use(authHTTP.RequireAuth)
 			protected.Get("/auth/me", authHTTP.Me)
+			protected.Patch("/profile", authHTTP.UpdateProfile)
+			protected.Put("/profile/avatar", authHTTP.UpdateAvatar)
+			protected.Delete("/profile/avatar", authHTTP.RemoveAvatar)
+			protected.Get("/profile/avatar", authHTTP.Avatar)
 			protected.Get("/assets", assetHTTP.List)
 			protected.Post("/assets", assetHTTP.Upload)
 			protected.Get("/assets/{id}/content", assetHTTP.Content)

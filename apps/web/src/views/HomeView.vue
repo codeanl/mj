@@ -23,6 +23,7 @@ import {
 } from "@lucide/vue"
 import { useAuthStore } from "@/stores/auth"
 import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue"
+import UserAvatar from "@/components/UserAvatar.vue"
 import * as assetApi from "@/services/assets"
 import {
   createImageGeneration,
@@ -546,7 +547,7 @@ onBeforeUnmount(() => {
           <Sun v-if="darkMode" :size="19" />
           <Moon v-else :size="19" />
         </button>
-        <span class="header-avatar">{{ authStore.userInitial }}</span>
+        <button class="header-avatar" type="button" aria-label="个人中心" @click="router.push('/profile')"><UserAvatar /></button>
       </div>
 
       <div class="creation-stage__intro">

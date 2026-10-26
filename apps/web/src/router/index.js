@@ -3,6 +3,7 @@ import { useAuthStore } from "@/stores/auth";
 const workspaceRoutes = [
     { path: "", name: "home", component: () => import("@/views/HomeView.vue"), meta: { title: "创作" } },
     { path: "assets", name: "assets", component: () => import("@/views/AssetsView.vue"), meta: { title: "素材" } },
+    { path: "profile", name: "profile", component: () => import("@/views/ProfileView.vue"), meta: { title: "个人中心" } },
 ];
 const router = createRouter({
     history: createWebHistory(),

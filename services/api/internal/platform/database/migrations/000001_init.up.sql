@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS users (
     points_balance numeric(18,2) NOT NULL DEFAULT 100,
     email text NOT NULL,
     username text NOT NULL,
+    avatar_storage_key text NOT NULL DEFAULT '',
+    avatar_mime_type text NOT NULL DEFAULT '',
+    avatar_updated_at timestamptz,
     password_hash text NOT NULL,
     role text NOT NULL DEFAULT 'user',
     status text NOT NULL DEFAULT 'active',
@@ -20,6 +23,9 @@ CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC);
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS public_id bigint;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS points_balance numeric(18,2) NOT NULL DEFAULT 100;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_storage_key text NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_mime_type text NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_updated_at timestamptz;
 CREATE SEQUENCE IF NOT EXISTS users_public_id_seq;
 ALTER SEQUENCE users_public_id_seq OWNED BY users.public_id;
 ALTER TABLE users ALTER COLUMN public_id SET DEFAULT nextval('users_public_id_seq');

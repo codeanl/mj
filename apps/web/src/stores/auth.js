@@ -6,6 +6,7 @@ export const useAuthStore = defineStore("auth", {
     state: () => ({
         token: localStorage.getItem(ACCESS_TOKEN_KEY) || "",
         user: null,
+        avatarObjectUrl: "",
         initialized: false,
     }),
     getters: {
@@ -22,6 +23,7 @@ export const useAuthStore = defineStore("auth", {
             }
             try {
                 this.user = await authApi.getCurrentUser();
+                await this.refreshAvatar();
             }
             catch {
                 this.clearSession();
@@ -45,6 +47,33 @@ export const useAuthStore = defineStore("auth", {
             if (this.user)
                 this.user = { ...this.user, pointsBalance };
         },
+        async updateProfile(username) {
+            this.user = await authApi.updateProfile({ username });
+        },
+        async updateAvatar(file) {
+            this.user = await authApi.updateAvatar(file);
+            await this.refreshAvatar();
+        },
+        async removeAvatar() {
+            this.user = await authApi.removeAvatar();
+            this.revokeAvatar();
+        },
+        async refreshAvatar() {
+            this.revokeAvatar();
+            if (!this.user?.avatarUrl)
+                return;
+            try {
+                this.avatarObjectUrl = URL.createObjectURL(await authApi.getAvatar());
+            }
+            catch {
+                this.avatarObjectUrl = "";
+            }
+        },
+        revokeAvatar() {
+            if (this.avatarObjectUrl)
+                URL.revokeObjectURL(this.avatarObjectUrl);
+            this.avatarObjectUrl = "";
+        },
         async refreshPointsBalance() {
             if (!this.user)
                 return;
@@ -56,10 +85,12 @@ export const useAuthStore = defineStore("auth", {
             this.user = result.user;
             this.initialized = true;
             localStorage.setItem(ACCESS_TOKEN_KEY, result.accessToken);
+            void this.refreshAvatar();
         },
         clearSession() {
             this.token = "";
             this.user = null;
+            this.revokeAvatar();
             this.initialized = true;
             localStorage.removeItem(ACCESS_TOKEN_KEY);
         },

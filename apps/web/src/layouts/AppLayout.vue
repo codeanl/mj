@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router"
 import {
   Boxes,
   Clapperboard,
+  CircleUserRound,
   Coins,
   House,
   LogOut,
@@ -12,6 +13,7 @@ import {
 } from "@lucide/vue"
 
 import BrandMark from "@/components/BrandMark.vue"
+import UserAvatar from "@/components/UserAvatar.vue"
 import { useAppStore } from "@/stores/app"
 import { useAuthStore } from "@/stores/auth"
 
@@ -23,6 +25,7 @@ const authStore = useAuthStore()
 const primaryNavigation = [
   { label: "创作", path: "/", icon: House },
   { label: "素材", path: "/assets", icon: Boxes },
+  { label: "个人中心", path: "/profile", icon: CircleUserRound },
 ]
 
 const currentTitle = computed(() => String(route.meta.title || "创作工作台"))
@@ -68,12 +71,14 @@ function formatPoints(value: number | undefined) {
 
       <div class="sidebar__bottom">
         <div class="profile-strip">
-          <span class="profile-strip__avatar">{{ authStore.userInitial }}</span>
-          <span class="profile-strip__copy">
+          <RouterLink class="profile-strip__identity" to="/profile" @click="appStore.closeMobileNavigation">
+            <UserAvatar class="profile-strip__avatar" />
+            <span class="profile-strip__copy">
             <strong>{{ authStore.user?.username }}</strong>
             <small>{{ authStore.user?.email }}</small>
             <small class="profile-strip__points" title="积分余额"><Coins :size="12" />{{ formatPoints(authStore.user?.pointsBalance) }} 积分</small>
-          </span>
+            </span>
+          </RouterLink>
           <button type="button" aria-label="退出登录" title="退出登录" @click="logout"><LogOut :size="16" /></button>
         </div>
       </div>
@@ -97,7 +102,7 @@ function formatPoints(value: number | undefined) {
           <span>{{ currentTitle }}</span>
         </div>
         <span class="mobile-user-balance"><Coins :size="13" />{{ formatPoints(authStore.user?.pointsBalance) }}</span>
-        <span class="profile-strip__avatar profile-strip__avatar--small">{{ authStore.userInitial }}</span>
+        <RouterLink to="/profile" aria-label="个人中心"><UserAvatar class="profile-strip__avatar profile-strip__avatar--small" /></RouterLink>
       </header>
 
       <main class="page-scroll">

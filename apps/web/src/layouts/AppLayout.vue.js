@@ -1,7 +1,8 @@
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { Boxes, Clapperboard, Coins, House, LogOut, Menu, X, } from "@lucide/vue";
+import { Boxes, Clapperboard, CircleUserRound, Coins, House, LogOut, Menu, X, } from "@lucide/vue";
 import BrandMark from "@/components/BrandMark.vue";
+import UserAvatar from "@/components/UserAvatar.vue";
 import { useAppStore } from "@/stores/app";
 import { useAuthStore } from "@/stores/auth";
 const route = useRoute();
@@ -11,6 +12,7 @@ const authStore = useAuthStore();
 const primaryNavigation = [
     { label: "创作", path: "/", icon: House },
     { label: "素材", path: "/assets", icon: Boxes },
+    { label: "个人中心", path: "/profile", icon: CircleUserRound },
 ];
 const currentTitle = computed(() => String(route.meta.title || "创作工作台"));
 const isActive = (path) => (path === "/" ? route.path === "/" : route.path.startsWith(path));
@@ -129,11 +131,37 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "profile-strip" },
 });
 /** @type {__VLS_StyleScopedClasses['profile-strip']} */ ;
-__VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
+let __VLS_24;
+/** @ts-ignore @type { | typeof __VLS_components.RouterLink | typeof __VLS_components.RouterLink} */
+RouterLink;
+// @ts-ignore
+const __VLS_25 = __VLS_asFunctionalComponent1(__VLS_24, new __VLS_24({
+    // @ts-ignore
+    ...{ 'onClick': {} }, ...{ class: "profile-strip__identity" }, to: "/profile",
+}));
+const __VLS_26 = __VLS_25({
+    ...{ 'onClick': {} },
+    ...{ class: "profile-strip__identity" },
+    to: "/profile",
+}, ...__VLS_functionalComponentArgsRest(__VLS_25));
+let __VLS_29;
+const __VLS_30 = {
+    /** @type {typeof __VLS_29.click} */
+    onClick: (appStore.value.closeMobileNavigation),
+};
+void __VLS_30;
+/** @type {__VLS_StyleScopedClasses['profile-strip__identity']} */ ;
+const { default: __VLS_31 } = __VLS_nonNull(__VLS_27.slots);
+const __VLS_32 = UserAvatar;
+// @ts-ignore
+const __VLS_33 = __VLS_asFunctionalComponent1(__VLS_32, new __VLS_32({
+    // @ts-ignore
     ...{ class: "profile-strip__avatar" },
-});
+}));
+const __VLS_34 = __VLS_33({
+    ...{ class: "profile-strip__avatar" },
+}, ...__VLS_functionalComponentArgsRest(__VLS_33));
 /** @type {__VLS_StyleScopedClasses['profile-strip__avatar']} */ ;
-(authStore.value.userInitial);
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
     ...{ class: "profile-strip__copy" },
 });
@@ -147,35 +175,39 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({
     title: "积分余额",
 });
 /** @type {__VLS_StyleScopedClasses['profile-strip__points']} */ ;
-let __VLS_24;
+let __VLS_37;
 /** @ts-ignore @type { | typeof __VLS_components.Coins} */
 Coins;
 // @ts-ignore
-const __VLS_25 = __VLS_asFunctionalComponent1(__VLS_24, new __VLS_24({
+const __VLS_38 = __VLS_asFunctionalComponent1(__VLS_37, new __VLS_37({
     // @ts-ignore
     size: (12),
 }));
-const __VLS_26 = __VLS_25({
+const __VLS_39 = __VLS_38({
     size: (12),
-}, ...__VLS_functionalComponentArgsRest(__VLS_25));
+}, ...__VLS_functionalComponentArgsRest(__VLS_38));
 (formatPoints(authStore.value.user?.pointsBalance));
+// @ts-ignore
+[appStore, authStore, authStore, authStore,];
+var __VLS_27;
+var __VLS_28;
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: (logout) },
     type: "button",
     'aria-label': "退出登录",
     title: "退出登录",
 });
-let __VLS_29;
+let __VLS_42;
 /** @ts-ignore @type { | typeof __VLS_components.LogOut} */
 LogOut;
 // @ts-ignore
-const __VLS_30 = __VLS_asFunctionalComponent1(__VLS_29, new __VLS_29({
+const __VLS_43 = __VLS_asFunctionalComponent1(__VLS_42, new __VLS_42({
     // @ts-ignore
     size: (16),
 }));
-const __VLS_31 = __VLS_30({
+const __VLS_44 = __VLS_43({
     size: (16),
-}, ...__VLS_functionalComponentArgsRest(__VLS_30));
+}, ...__VLS_functionalComponentArgsRest(__VLS_43));
 if (appStore.value.mobileNavigationOpen) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.button)({
         ...{ onClick: (appStore.value.closeMobileNavigation) },
@@ -200,69 +232,90 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     'aria-label': "打开导航",
 });
 /** @type {__VLS_StyleScopedClasses['icon-button']} */ ;
-let __VLS_34;
+let __VLS_47;
 /** @ts-ignore @type { | typeof __VLS_components.Menu} */
 Menu;
 // @ts-ignore
-const __VLS_35 = __VLS_asFunctionalComponent1(__VLS_34, new __VLS_34({
+const __VLS_48 = __VLS_asFunctionalComponent1(__VLS_47, new __VLS_47({
     // @ts-ignore
     size: (20),
 }));
-const __VLS_36 = __VLS_35({
+const __VLS_49 = __VLS_48({
     size: (20),
-}, ...__VLS_functionalComponentArgsRest(__VLS_35));
+}, ...__VLS_functionalComponentArgsRest(__VLS_48));
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "mobile-header__title" },
 });
 /** @type {__VLS_StyleScopedClasses['mobile-header__title']} */ ;
-let __VLS_39;
+let __VLS_52;
 /** @ts-ignore @type { | typeof __VLS_components.Clapperboard} */
 Clapperboard;
 // @ts-ignore
-const __VLS_40 = __VLS_asFunctionalComponent1(__VLS_39, new __VLS_39({
+const __VLS_53 = __VLS_asFunctionalComponent1(__VLS_52, new __VLS_52({
     // @ts-ignore
     size: (17),
 }));
-const __VLS_41 = __VLS_40({
+const __VLS_54 = __VLS_53({
     size: (17),
-}, ...__VLS_functionalComponentArgsRest(__VLS_40));
+}, ...__VLS_functionalComponentArgsRest(__VLS_53));
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
 (__VLS_unwrap(currentTitle, {}));
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
     ...{ class: "mobile-user-balance" },
 });
 /** @type {__VLS_StyleScopedClasses['mobile-user-balance']} */ ;
-let __VLS_44;
+let __VLS_57;
 /** @ts-ignore @type { | typeof __VLS_components.Coins} */
 Coins;
 // @ts-ignore
-const __VLS_45 = __VLS_asFunctionalComponent1(__VLS_44, new __VLS_44({
+const __VLS_58 = __VLS_asFunctionalComponent1(__VLS_57, new __VLS_57({
     // @ts-ignore
     size: (13),
 }));
-const __VLS_46 = __VLS_45({
+const __VLS_59 = __VLS_58({
     size: (13),
-}, ...__VLS_functionalComponentArgsRest(__VLS_45));
+}, ...__VLS_functionalComponentArgsRest(__VLS_58));
 (formatPoints(authStore.value.user?.pointsBalance));
-__VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
+let __VLS_62;
+/** @ts-ignore @type { | typeof __VLS_components.RouterLink | typeof __VLS_components.RouterLink} */
+RouterLink;
+// @ts-ignore
+const __VLS_63 = __VLS_asFunctionalComponent1(__VLS_62, new __VLS_62({
+    // @ts-ignore
+    to: "/profile", 'aria-label': "个人中心",
+}));
+const __VLS_64 = __VLS_63({
+    to: "/profile",
+    'aria-label': "个人中心",
+}, ...__VLS_functionalComponentArgsRest(__VLS_63));
+const { default: __VLS_67 } = __VLS_nonNull(__VLS_65.slots);
+const __VLS_68 = UserAvatar;
+// @ts-ignore
+const __VLS_69 = __VLS_asFunctionalComponent1(__VLS_68, new __VLS_68({
+    // @ts-ignore
     ...{ class: "profile-strip__avatar profile-strip__avatar--small" },
-});
+}));
+const __VLS_70 = __VLS_69({
+    ...{ class: "profile-strip__avatar profile-strip__avatar--small" },
+}, ...__VLS_functionalComponentArgsRest(__VLS_69));
 /** @type {__VLS_StyleScopedClasses['profile-strip__avatar']} */ ;
 /** @type {__VLS_StyleScopedClasses['profile-strip__avatar--small']} */ ;
-(authStore.value.userInitial);
+// @ts-ignore
+[appStore, appStore, appStore, authStore, currentTitle,];
+var __VLS_65;
 __VLS_asFunctionalElement1(__VLS_intrinsics.main, __VLS_intrinsics.main)({
     ...{ class: "page-scroll" },
 });
 /** @type {__VLS_StyleScopedClasses['page-scroll']} */ ;
-let __VLS_49;
+let __VLS_73;
 /** @ts-ignore @type { | typeof __VLS_components.RouterView} */
 RouterView;
 // @ts-ignore
-const __VLS_50 = __VLS_asFunctionalComponent1(__VLS_49, new __VLS_49({
+const __VLS_74 = __VLS_asFunctionalComponent1(__VLS_73, new __VLS_73({
 // @ts-ignore
 }));
-const __VLS_51 = __VLS_50({}, ...__VLS_functionalComponentArgsRest(__VLS_50));
+const __VLS_75 = __VLS_74({}, ...__VLS_functionalComponentArgsRest(__VLS_74));
 // @ts-ignore
-[appStore, appStore, appStore, authStore, authStore, authStore, authStore, authStore, authStore, currentTitle,];
+[];
 const __VLS_export = (await import('vue')).defineComponent({});
 export default {};

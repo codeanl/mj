@@ -4,6 +4,7 @@ import { useIntervalFn } from "@vueuse/core";
 import { ArrowRight, Bell, ChevronDown, Clock3, Image, FolderOpen, LoaderCircle, Music, Moon, Paperclip, Play, Plus, Sparkles, Sun, Type, Video, X, } from "@lucide/vue";
 import { useAuthStore } from "@/stores/auth";
 import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue";
+import UserAvatar from "@/components/UserAvatar.vue";
 import * as assetApi from "@/services/assets";
 import { createImageGeneration, createVideoGeneration, } from "@/services/generation";
 import { apiErrorMessage } from "@/services/http";
@@ -567,7 +568,7 @@ __VLS_withDotValue(showHeroBackdrop, {});
 // @ts-ignore
 __VLS_withDotValue(darkMode, {});
 // @ts-ignore
-__VLS_withDotValue(authStore, {});
+__VLS_withDotValue(router, {});
 // @ts-ignore
 __VLS_withDotValue(activeType, {});
 // @ts-ignore
@@ -588,8 +589,6 @@ __VLS_withDotValue(watermarkEnabled, {});
 __VLS_withDotValue(creating, {});
 // @ts-ignore
 __VLS_withDotValue(selectedModel, {});
-// @ts-ignore
-__VLS_withDotValue(router, {});
 // @ts-ignore
 __VLS_withDotValue(recentLoading, {});
 // @ts-ignore
@@ -693,11 +692,25 @@ else {
         size: (19),
     }, ...__VLS_functionalComponentArgsRest(__VLS_11));
 }
-__VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
+__VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+    ...{ onClick: // @ts-ignore
+        (...[$event]) => {
+            void $event;
+            return (router.value.push('/profile'));
+            // @ts-ignore
+            [darkMode, darkMode, router,];
+        } },
     ...{ class: "header-avatar" },
+    type: "button",
+    'aria-label': "个人中心",
 });
 /** @type {__VLS_StyleScopedClasses['header-avatar']} */ ;
-(authStore.value.userInitial);
+const __VLS_15 = UserAvatar;
+// @ts-ignore
+const __VLS_16 = __VLS_asFunctionalComponent1(__VLS_15, new __VLS_15({
+// @ts-ignore
+}));
+const __VLS_17 = __VLS_16({}, ...__VLS_functionalComponentArgsRest(__VLS_16));
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "creation-stage__intro" },
 });
@@ -716,15 +729,15 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     'aria-label': "创作类型",
 });
 /** @type {__VLS_StyleScopedClasses['composer__tabs']} */ ;
-const __VLS_15 = __VLS_tryAsConstant((__VLS_unwrap(creationTypes, {})));
-for (const [type] of __VLS_vFor(__VLS_nonNull(__VLS_15))) {
+const __VLS_20 = __VLS_tryAsConstant((__VLS_unwrap(creationTypes, {})));
+for (const [type] of __VLS_vFor(__VLS_nonNull(__VLS_20))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
         ...{ onClick: // @ts-ignore
             (...[$event]) => {
                 void $event;
                 return (selectCreationType(type.id));
                 // @ts-ignore
-                [darkMode, darkMode, authStore, creationTypes,];
+                [creationTypes,];
             } },
         key: (type.id),
         type: "button",
@@ -733,15 +746,15 @@ for (const [type] of __VLS_vFor(__VLS_nonNull(__VLS_15))) {
         ...{ class: ({ 'composer__tab--active': activeType.value === type.id }) },
     });
     /** @type {__VLS_StyleScopedClasses['composer__tab--active']} */ ;
-    const __VLS_16 = (type.icon);
+    const __VLS_21 = (type.icon);
     // @ts-ignore
-    const __VLS_17 = __VLS_asFunctionalComponent1(__VLS_16, new __VLS_16({
+    const __VLS_22 = __VLS_asFunctionalComponent1(__VLS_21, new __VLS_21({
         // @ts-ignore
         size: (17),
     }));
-    const __VLS_18 = __VLS_17({
+    const __VLS_23 = __VLS_22({
         size: (17),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_17));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_22));
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
     (type.label);
     // @ts-ignore
@@ -774,32 +787,9 @@ if (activeType.value === 'video' && videoMode.value === 'text') {
     });
     /** @type {__VLS_StyleScopedClasses['reference-slot__pick']} */ ;
     /** @type {__VLS_StyleScopedClasses['reference-slot__pick--static']} */ ;
-    let __VLS_21;
+    let __VLS_26;
     /** @ts-ignore @type { | typeof __VLS_components.Type} */
     Type;
-    // @ts-ignore
-    const __VLS_22 = __VLS_asFunctionalComponent1(__VLS_21, new __VLS_21({
-        // @ts-ignore
-        size: (21),
-    }));
-    const __VLS_23 = __VLS_22({
-        size: (21),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_22));
-    __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
-    __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
-    (__VLS_unwrap(referenceHint, {}));
-}
-else if (!references.value.length) {
-    __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
-        ...{ onClick: (openReferencePicker) },
-        ...{ class: "reference-slot__pick" },
-        type: "button",
-        'aria-label': "添加参考素材",
-    });
-    /** @type {__VLS_StyleScopedClasses['reference-slot__pick']} */ ;
-    let __VLS_26;
-    /** @ts-ignore @type { | typeof __VLS_components.Paperclip} */
-    Paperclip;
     // @ts-ignore
     const __VLS_27 = __VLS_asFunctionalComponent1(__VLS_26, new __VLS_26({
         // @ts-ignore
@@ -812,13 +802,36 @@ else if (!references.value.length) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
     (__VLS_unwrap(referenceHint, {}));
 }
+else if (!references.value.length) {
+    __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
+        ...{ onClick: (openReferencePicker) },
+        ...{ class: "reference-slot__pick" },
+        type: "button",
+        'aria-label': "添加参考素材",
+    });
+    /** @type {__VLS_StyleScopedClasses['reference-slot__pick']} */ ;
+    let __VLS_31;
+    /** @ts-ignore @type { | typeof __VLS_components.Paperclip} */
+    Paperclip;
+    // @ts-ignore
+    const __VLS_32 = __VLS_asFunctionalComponent1(__VLS_31, new __VLS_31({
+        // @ts-ignore
+        size: (21),
+    }));
+    const __VLS_33 = __VLS_32({
+        size: (21),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_32));
+    __VLS_asFunctionalElement1(__VLS_intrinsics.strong, __VLS_intrinsics.strong)({});
+    __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
+    (__VLS_unwrap(referenceHint, {}));
+}
 else {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "reference-slot__grid" },
     });
     /** @type {__VLS_StyleScopedClasses['reference-slot__grid']} */ ;
-    const __VLS_31 = __VLS_tryAsConstant((references.value));
-    for (const [reference] of __VLS_vFor(__VLS_nonNull(__VLS_31))) {
+    const __VLS_36 = __VLS_tryAsConstant((references.value));
+    for (const [reference] of __VLS_vFor(__VLS_nonNull(__VLS_36))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
             key: (reference.key),
             ...{ class: "reference-slot__thumb" },
@@ -844,22 +857,9 @@ else {
             });
             /** @type {__VLS_StyleScopedClasses['reference-slot__audio']} */ ;
             if (reference.kind === 'audio') {
-                let __VLS_32;
+                let __VLS_37;
                 /** @ts-ignore @type { | typeof __VLS_components.Music} */
                 Music;
-                // @ts-ignore
-                const __VLS_33 = __VLS_asFunctionalComponent1(__VLS_32, new __VLS_32({
-                    // @ts-ignore
-                    size: (17),
-                }));
-                const __VLS_34 = __VLS_33({
-                    size: (17),
-                }, ...__VLS_functionalComponentArgsRest(__VLS_33));
-            }
-            else if (reference.kind === 'video') {
-                let __VLS_37;
-                /** @ts-ignore @type { | typeof __VLS_components.Video} */
-                Video;
                 // @ts-ignore
                 const __VLS_38 = __VLS_asFunctionalComponent1(__VLS_37, new __VLS_37({
                     // @ts-ignore
@@ -869,10 +869,10 @@ else {
                     size: (17),
                 }, ...__VLS_functionalComponentArgsRest(__VLS_38));
             }
-            else {
+            else if (reference.kind === 'video') {
                 let __VLS_42;
-                /** @ts-ignore @type { | typeof __VLS_components.Image} */
-                Image;
+                /** @ts-ignore @type { | typeof __VLS_components.Video} */
+                Video;
                 // @ts-ignore
                 const __VLS_43 = __VLS_asFunctionalComponent1(__VLS_42, new __VLS_42({
                     // @ts-ignore
@@ -881,6 +881,19 @@ else {
                 const __VLS_44 = __VLS_43({
                     size: (17),
                 }, ...__VLS_functionalComponentArgsRest(__VLS_43));
+            }
+            else {
+                let __VLS_47;
+                /** @ts-ignore @type { | typeof __VLS_components.Image} */
+                Image;
+                // @ts-ignore
+                const __VLS_48 = __VLS_asFunctionalComponent1(__VLS_47, new __VLS_47({
+                    // @ts-ignore
+                    size: (17),
+                }));
+                const __VLS_49 = __VLS_48({
+                    size: (17),
+                }, ...__VLS_functionalComponentArgsRest(__VLS_48));
             }
             __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
             (reference.name);
@@ -908,17 +921,17 @@ else {
             'aria-label': "移除参考素材",
             title: "移除参考素材",
         });
-        let __VLS_47;
+        let __VLS_52;
         /** @ts-ignore @type { | typeof __VLS_components.X} */
         X;
         // @ts-ignore
-        const __VLS_48 = __VLS_asFunctionalComponent1(__VLS_47, new __VLS_47({
+        const __VLS_53 = __VLS_asFunctionalComponent1(__VLS_52, new __VLS_52({
             // @ts-ignore
             size: (12),
         }));
-        const __VLS_49 = __VLS_48({
+        const __VLS_54 = __VLS_53({
             size: (12),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_48));
+        }, ...__VLS_functionalComponentArgsRest(__VLS_53));
         // @ts-ignore
         [];
     }
@@ -930,17 +943,17 @@ else {
             'aria-label': "继续添加参考素材",
         });
         /** @type {__VLS_StyleScopedClasses['reference-slot__add']} */ ;
-        let __VLS_52;
+        let __VLS_57;
         /** @ts-ignore @type { | typeof __VLS_components.Plus} */
         Plus;
         // @ts-ignore
-        const __VLS_53 = __VLS_asFunctionalComponent1(__VLS_52, new __VLS_52({
+        const __VLS_58 = __VLS_asFunctionalComponent1(__VLS_57, new __VLS_57({
             // @ts-ignore
             size: (18),
         }));
-        const __VLS_54 = __VLS_53({
+        const __VLS_59 = __VLS_58({
             size: (18),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_53));
+        }, ...__VLS_functionalComponentArgsRest(__VLS_58));
         __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
         (references.value.length);
         (__VLS_unwrap(referenceLimit, {}));
@@ -983,8 +996,8 @@ else if (!currentCapability.value?.models.length) {
         value: "",
     });
 }
-const __VLS_57 = __VLS_tryAsConstant((currentCapability.value?.models || []));
-for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_57))) {
+const __VLS_62 = __VLS_tryAsConstant((currentCapability.value?.models || []));
+for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_62))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
         key: (option.value),
         value: (option.value),
@@ -993,17 +1006,17 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_57))) {
     // @ts-ignore
     [references, references, referenceLimit, referenceLimit, prompt, promptPlaceholder, selectedModel, modelsLoading, modelsLoading, currentCapability, currentCapability, currentCapability,];
 }
-let __VLS_58;
+let __VLS_63;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
 ChevronDown;
 // @ts-ignore
-const __VLS_59 = __VLS_asFunctionalComponent1(__VLS_58, new __VLS_58({
+const __VLS_64 = __VLS_asFunctionalComponent1(__VLS_63, new __VLS_63({
     // @ts-ignore
     size: (14),
 }));
-const __VLS_60 = __VLS_59({
+const __VLS_65 = __VLS_64({
     size: (14),
-}, ...__VLS_functionalComponentArgsRest(__VLS_59));
+}, ...__VLS_functionalComponentArgsRest(__VLS_64));
 if (activeType.value === 'video') {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
         ...{ class: "compact-select compact-select--mode" },
@@ -1015,8 +1028,8 @@ if (activeType.value === 'video') {
         value: (videoMode.value),
         'aria-label': "视频生成模式",
     });
-    const __VLS_63 = __VLS_tryAsConstant((__VLS_unwrap(availableVideoModes, {})));
-    for (const [mode] of __VLS_vFor(__VLS_nonNull(__VLS_63))) {
+    const __VLS_68 = __VLS_tryAsConstant((__VLS_unwrap(availableVideoModes, {})));
+    for (const [mode] of __VLS_vFor(__VLS_nonNull(__VLS_68))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
             key: (mode.value),
             value: (mode.value),
@@ -1025,17 +1038,17 @@ if (activeType.value === 'video') {
         // @ts-ignore
         [activeType, videoMode, availableVideoModes,];
     }
-    let __VLS_64;
+    let __VLS_69;
     /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
     ChevronDown;
     // @ts-ignore
-    const __VLS_65 = __VLS_asFunctionalComponent1(__VLS_64, new __VLS_64({
+    const __VLS_70 = __VLS_asFunctionalComponent1(__VLS_69, new __VLS_69({
         // @ts-ignore
         size: (14),
     }));
-    const __VLS_66 = __VLS_65({
+    const __VLS_71 = __VLS_70({
         size: (14),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_65));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_70));
 }
 __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
     ...{ class: "compact-select compact-select--small" },
@@ -1047,8 +1060,8 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.select, __VLS_intrinsics.select)({
     'aria-label': "画面比例",
     disabled: (!currentCapability.value?.enabled),
 });
-const __VLS_69 = __VLS_tryAsConstant((currentCapability.value?.sizes || []));
-for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_69))) {
+const __VLS_74 = __VLS_tryAsConstant((currentCapability.value?.sizes || []));
+for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_74))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
         key: (option.value),
         value: (option.value),
@@ -1057,17 +1070,17 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_69))) {
     // @ts-ignore
     [currentCapability, currentCapability, selectedSize,];
 }
-let __VLS_70;
+let __VLS_75;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
 ChevronDown;
 // @ts-ignore
-const __VLS_71 = __VLS_asFunctionalComponent1(__VLS_70, new __VLS_70({
+const __VLS_76 = __VLS_asFunctionalComponent1(__VLS_75, new __VLS_75({
     // @ts-ignore
     size: (14),
 }));
-const __VLS_72 = __VLS_71({
+const __VLS_77 = __VLS_76({
     size: (14),
-}, ...__VLS_functionalComponentArgsRest(__VLS_71));
+}, ...__VLS_functionalComponentArgsRest(__VLS_76));
 __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
     ...{ class: "compact-select compact-select--small" },
 });
@@ -1078,8 +1091,8 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.select, __VLS_intrinsics.select)({
     'aria-label': "分辨率",
     disabled: (!currentCapability.value?.enabled),
 });
-const __VLS_75 = __VLS_tryAsConstant((currentCapability.value?.qualities || []));
-for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_75))) {
+const __VLS_80 = __VLS_tryAsConstant((currentCapability.value?.qualities || []));
+for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_80))) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
         key: (option.value),
         value: (option.value),
@@ -1088,17 +1101,17 @@ for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_75))) {
     // @ts-ignore
     [currentCapability, currentCapability, selectedQuality,];
 }
-let __VLS_76;
+let __VLS_81;
 /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
 ChevronDown;
 // @ts-ignore
-const __VLS_77 = __VLS_asFunctionalComponent1(__VLS_76, new __VLS_76({
+const __VLS_82 = __VLS_asFunctionalComponent1(__VLS_81, new __VLS_81({
     // @ts-ignore
     size: (14),
 }));
-const __VLS_78 = __VLS_77({
+const __VLS_83 = __VLS_82({
     size: (14),
-}, ...__VLS_functionalComponentArgsRest(__VLS_77));
+}, ...__VLS_functionalComponentArgsRest(__VLS_82));
 if (activeType.value === 'image') {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
         ...{ class: "compact-select compact-select--count" },
@@ -1110,8 +1123,8 @@ if (activeType.value === 'image') {
         'aria-label': "生成张数",
         disabled: (!currentCapability.value?.enabled),
     });
-    const __VLS_81 = __VLS_tryAsConstant((4));
-    for (const [count] of __VLS_vFor(__VLS_nonNull(__VLS_81))) {
+    const __VLS_86 = __VLS_tryAsConstant((4));
+    for (const [count] of __VLS_vFor(__VLS_nonNull(__VLS_86))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
             key: (count),
             value: (count),
@@ -1120,17 +1133,17 @@ if (activeType.value === 'image') {
         // @ts-ignore
         [activeType, currentCapability, selectedCount,];
     }
-    let __VLS_82;
+    let __VLS_87;
     /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
     ChevronDown;
     // @ts-ignore
-    const __VLS_83 = __VLS_asFunctionalComponent1(__VLS_82, new __VLS_82({
+    const __VLS_88 = __VLS_asFunctionalComponent1(__VLS_87, new __VLS_87({
         // @ts-ignore
         size: (14),
     }));
-    const __VLS_84 = __VLS_83({
+    const __VLS_89 = __VLS_88({
         size: (14),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_83));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_88));
 }
 else {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
@@ -1143,8 +1156,8 @@ else {
         'aria-label': "视频时长",
         disabled: (!currentCapability.value?.enabled),
     });
-    const __VLS_87 = __VLS_tryAsConstant((currentCapability.value?.durations || []));
-    for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_87))) {
+    const __VLS_92 = __VLS_tryAsConstant((currentCapability.value?.durations || []));
+    for (const [option] of __VLS_vFor(__VLS_nonNull(__VLS_92))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.option, __VLS_intrinsics.option)({
             key: (option.value),
             value: (Number(option.value)),
@@ -1153,17 +1166,17 @@ else {
         // @ts-ignore
         [currentCapability, currentCapability, selectedDuration,];
     }
-    let __VLS_88;
+    let __VLS_93;
     /** @ts-ignore @type { | typeof __VLS_components.ChevronDown} */
     ChevronDown;
     // @ts-ignore
-    const __VLS_89 = __VLS_asFunctionalComponent1(__VLS_88, new __VLS_88({
+    const __VLS_94 = __VLS_asFunctionalComponent1(__VLS_93, new __VLS_93({
         // @ts-ignore
         size: (14),
     }));
-    const __VLS_90 = __VLS_89({
+    const __VLS_95 = __VLS_94({
         size: (14),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_89));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_94));
 }
 if (activeType.value === 'video') {
     __VLS_asFunctionalElement1(__VLS_intrinsics.label, __VLS_intrinsics.label)({
@@ -1203,46 +1216,46 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
 });
 /** @type {__VLS_StyleScopedClasses['create-button']} */ ;
 if (creating.value) {
-    let __VLS_93;
+    let __VLS_98;
     /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
     LoaderCircle;
     // @ts-ignore
-    const __VLS_94 = __VLS_asFunctionalComponent1(__VLS_93, new __VLS_93({
+    const __VLS_99 = __VLS_asFunctionalComponent1(__VLS_98, new __VLS_98({
         // @ts-ignore
         ...{ class: "spin" }, size: (18),
     }));
-    const __VLS_95 = __VLS_94({
+    const __VLS_100 = __VLS_99({
         ...{ class: "spin" },
         size: (18),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_94));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_99));
     /** @type {__VLS_StyleScopedClasses['spin']} */ ;
 }
 else {
-    let __VLS_98;
+    let __VLS_103;
     /** @ts-ignore @type { | typeof __VLS_components.Sparkles} */
     Sparkles;
     // @ts-ignore
-    const __VLS_99 = __VLS_asFunctionalComponent1(__VLS_98, new __VLS_98({
+    const __VLS_104 = __VLS_asFunctionalComponent1(__VLS_103, new __VLS_103({
         // @ts-ignore
         size: (18),
     }));
-    const __VLS_100 = __VLS_99({
+    const __VLS_105 = __VLS_104({
         size: (18),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_99));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_104));
 }
 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
 (creating.value ? "提交中" : "开始生成");
-let __VLS_103;
+let __VLS_108;
 /** @ts-ignore @type { | typeof __VLS_components.ArrowRight} */
 ArrowRight;
 // @ts-ignore
-const __VLS_104 = __VLS_asFunctionalComponent1(__VLS_103, new __VLS_103({
+const __VLS_109 = __VLS_asFunctionalComponent1(__VLS_108, new __VLS_108({
     // @ts-ignore
     size: (17),
 }));
-const __VLS_105 = __VLS_104({
+const __VLS_110 = __VLS_109({
     size: (17),
-}, ...__VLS_functionalComponentArgsRest(__VLS_104));
+}, ...__VLS_functionalComponentArgsRest(__VLS_109));
 __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
     ...{ class: "home-content" },
 });
@@ -1265,17 +1278,17 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
 });
 /** @type {__VLS_StyleScopedClasses['section-heading__icon']} */ ;
 /** @type {__VLS_StyleScopedClasses['section-heading__icon--blue']} */ ;
-let __VLS_108;
+let __VLS_113;
 /** @ts-ignore @type { | typeof __VLS_components.Clock3} */
 Clock3;
 // @ts-ignore
-const __VLS_109 = __VLS_asFunctionalComponent1(__VLS_108, new __VLS_108({
+const __VLS_114 = __VLS_asFunctionalComponent1(__VLS_113, new __VLS_113({
     // @ts-ignore
     size: (16),
 }));
-const __VLS_110 = __VLS_109({
+const __VLS_115 = __VLS_114({
     size: (16),
-}, ...__VLS_functionalComponentArgsRest(__VLS_109));
+}, ...__VLS_functionalComponentArgsRest(__VLS_114));
 __VLS_asFunctionalElement1(__VLS_intrinsics.h2, __VLS_intrinsics.h2)({});
 __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
     ...{ onClick: // @ts-ignore
@@ -1283,21 +1296,21 @@ __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
             void $event;
             return (router.value.push('/assets'));
             // @ts-ignore
-            [activeType, activeType, selectedModel, modelsLoading, selectedVideoProfile, selectedVideoProfile, selectedVideoProfile, selectedVideoProfile, soundEnabled, soundEnabled, watermarkEnabled, watermarkEnabled, creating, creating, creating, router,];
+            [router, activeType, activeType, selectedModel, modelsLoading, selectedVideoProfile, selectedVideoProfile, selectedVideoProfile, selectedVideoProfile, soundEnabled, soundEnabled, watermarkEnabled, watermarkEnabled, creating, creating, creating,];
         } },
     type: "button",
 });
-let __VLS_113;
+let __VLS_118;
 /** @ts-ignore @type { | typeof __VLS_components.ArrowRight} */
 ArrowRight;
 // @ts-ignore
-const __VLS_114 = __VLS_asFunctionalComponent1(__VLS_113, new __VLS_113({
+const __VLS_119 = __VLS_asFunctionalComponent1(__VLS_118, new __VLS_118({
     // @ts-ignore
     size: (15),
 }));
-const __VLS_115 = __VLS_114({
+const __VLS_120 = __VLS_119({
     size: (15),
-}, ...__VLS_functionalComponentArgsRest(__VLS_114));
+}, ...__VLS_functionalComponentArgsRest(__VLS_119));
 if (recentLoading.value) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "media-grid media-grid--recent" },
@@ -1305,8 +1318,8 @@ if (recentLoading.value) {
     });
     /** @type {__VLS_StyleScopedClasses['media-grid']} */ ;
     /** @type {__VLS_StyleScopedClasses['media-grid--recent']} */ ;
-    const __VLS_118 = __VLS_tryAsConstant((8));
-    for (const [index] of __VLS_vFor(__VLS_nonNull(__VLS_118))) {
+    const __VLS_123 = __VLS_tryAsConstant((8));
+    for (const [index] of __VLS_vFor(__VLS_nonNull(__VLS_123))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.span)({
             key: (index),
             ...{ class: "media-tile media-tile--loading" },
@@ -1323,8 +1336,8 @@ else if (recentWorks.value.length) {
     });
     /** @type {__VLS_StyleScopedClasses['media-grid']} */ ;
     /** @type {__VLS_StyleScopedClasses['media-grid--recent']} */ ;
-    const __VLS_119 = __VLS_tryAsConstant((recentWorks.value));
-    for (const [work] of __VLS_vFor(__VLS_nonNull(__VLS_119))) {
+    const __VLS_124 = __VLS_tryAsConstant((recentWorks.value));
+    for (const [work] of __VLS_vFor(__VLS_nonNull(__VLS_124))) {
         __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
             ...{ onClick: // @ts-ignore
                 (...[$event]) => {
@@ -1381,18 +1394,18 @@ else if (recentWorks.value.length) {
                 ...{ class: "media-tile__play" },
             });
             /** @type {__VLS_StyleScopedClasses['media-tile__play']} */ ;
-            let __VLS_120;
+            let __VLS_125;
             /** @ts-ignore @type { | typeof __VLS_components.Play} */
             Play;
             // @ts-ignore
-            const __VLS_121 = __VLS_asFunctionalComponent1(__VLS_120, new __VLS_120({
+            const __VLS_126 = __VLS_asFunctionalComponent1(__VLS_125, new __VLS_125({
                 // @ts-ignore
                 size: (16), fill: "currentColor",
             }));
-            const __VLS_122 = __VLS_121({
+            const __VLS_127 = __VLS_126({
                 size: (16),
                 fill: "currentColor",
-            }, ...__VLS_functionalComponentArgsRest(__VLS_121));
+            }, ...__VLS_functionalComponentArgsRest(__VLS_126));
         }
         __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({
             ...{ class: "media-tile__caption" },
@@ -1415,31 +1428,31 @@ else {
     /** @type {__VLS_StyleScopedClasses['recent-empty']} */ ;
 }
 if (selectedRecent.value && recentDetailUrl.value) {
-    const __VLS_125 = AssetPreviewDialog;
+    const __VLS_130 = AssetPreviewDialog;
     // @ts-ignore
-    const __VLS_126 = __VLS_asFunctionalComponent1(__VLS_125, new __VLS_125({
+    const __VLS_131 = __VLS_asFunctionalComponent1(__VLS_130, new __VLS_130({
         // @ts-ignore
         ...{ 'onClose': {} }, ...{ 'onRecreate': {} }, asset: (selectedRecent.value), mediaUrl: (recentDetailUrl.value),
     }));
-    const __VLS_127 = __VLS_126({
+    const __VLS_132 = __VLS_131({
         ...{ 'onClose': {} },
         ...{ 'onRecreate': {} },
         asset: (selectedRecent.value),
         mediaUrl: (recentDetailUrl.value),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_126));
-    let __VLS_130;
-    const __VLS_131 = {
-        /** @type {typeof __VLS_130.close} */
+    }, ...__VLS_functionalComponentArgsRest(__VLS_131));
+    let __VLS_135;
+    const __VLS_136 = {
+        /** @type {typeof __VLS_135.close} */
         onClose: (closeRecent),
     };
-    void __VLS_131;
-    const __VLS_132 = {
-        /** @type {typeof __VLS_130.recreate} */
+    void __VLS_136;
+    const __VLS_137 = {
+        /** @type {typeof __VLS_135.recreate} */
         onRecreate: (useSameParameters),
     };
-    void __VLS_132;
-    var __VLS_128;
-    var __VLS_129;
+    void __VLS_137;
+    var __VLS_133;
+    var __VLS_134;
 }
 if (referencePickerOpen.value) {
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
@@ -1465,17 +1478,17 @@ if (referencePickerOpen.value) {
         title: "关闭",
         'aria-label': "关闭素材选择",
     });
-    let __VLS_133;
+    let __VLS_138;
     /** @ts-ignore @type { | typeof __VLS_components.X} */
     X;
     // @ts-ignore
-    const __VLS_134 = __VLS_asFunctionalComponent1(__VLS_133, new __VLS_133({
+    const __VLS_139 = __VLS_asFunctionalComponent1(__VLS_138, new __VLS_138({
         // @ts-ignore
         size: (18),
     }));
-    const __VLS_135 = __VLS_134({
+    const __VLS_140 = __VLS_139({
         size: (18),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_134));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_139));
     __VLS_asFunctionalElement1(__VLS_intrinsics.div, __VLS_intrinsics.div)({
         ...{ class: "reference-picker__toolbar" },
     });
@@ -1484,17 +1497,17 @@ if (referencePickerOpen.value) {
         ...{ onClick: (chooseReference) },
         type: "button",
     });
-    let __VLS_138;
+    let __VLS_143;
     /** @ts-ignore @type { | typeof __VLS_components.Paperclip} */
     Paperclip;
     // @ts-ignore
-    const __VLS_139 = __VLS_asFunctionalComponent1(__VLS_138, new __VLS_138({
+    const __VLS_144 = __VLS_asFunctionalComponent1(__VLS_143, new __VLS_143({
         // @ts-ignore
         size: (15),
     }));
-    const __VLS_140 = __VLS_139({
+    const __VLS_145 = __VLS_144({
         size: (15),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_139));
+    }, ...__VLS_functionalComponentArgsRest(__VLS_144));
     __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
     (references.value.length);
     (__VLS_unwrap(referenceLimit, {}));
@@ -1503,18 +1516,18 @@ if (referencePickerOpen.value) {
             ...{ class: "reference-picker__state" },
         });
         /** @type {__VLS_StyleScopedClasses['reference-picker__state']} */ ;
-        let __VLS_143;
+        let __VLS_148;
         /** @ts-ignore @type { | typeof __VLS_components.LoaderCircle} */
         LoaderCircle;
         // @ts-ignore
-        const __VLS_144 = __VLS_asFunctionalComponent1(__VLS_143, new __VLS_143({
+        const __VLS_149 = __VLS_asFunctionalComponent1(__VLS_148, new __VLS_148({
             // @ts-ignore
             ...{ class: "spin" }, size: (22),
         }));
-        const __VLS_145 = __VLS_144({
+        const __VLS_150 = __VLS_149({
             ...{ class: "spin" },
             size: (22),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_144));
+        }, ...__VLS_functionalComponentArgsRest(__VLS_149));
         /** @type {__VLS_StyleScopedClasses['spin']} */ ;
     }
     else if (referencePickerAssets.value.length) {
@@ -1522,8 +1535,8 @@ if (referencePickerOpen.value) {
             ...{ class: "reference-picker__grid" },
         });
         /** @type {__VLS_StyleScopedClasses['reference-picker__grid']} */ ;
-        const __VLS_148 = __VLS_tryAsConstant((referencePickerAssets.value));
-        for (const [asset] of __VLS_vFor(__VLS_nonNull(__VLS_148))) {
+        const __VLS_153 = __VLS_tryAsConstant((referencePickerAssets.value));
+        for (const [asset] of __VLS_vFor(__VLS_nonNull(__VLS_153))) {
             __VLS_asFunctionalElement1(__VLS_intrinsics.button, __VLS_intrinsics.button)({
                 ...{ onClick: // @ts-ignore
                     (...[$event]) => {
@@ -1551,22 +1564,9 @@ if (referencePickerOpen.value) {
             else {
                 __VLS_asFunctionalElement1(__VLS_intrinsics.span, __VLS_intrinsics.span)({});
                 if (asset.type === 'audio') {
-                    let __VLS_149;
+                    let __VLS_154;
                     /** @ts-ignore @type { | typeof __VLS_components.Music} */
                     Music;
-                    // @ts-ignore
-                    const __VLS_150 = __VLS_asFunctionalComponent1(__VLS_149, new __VLS_149({
-                        // @ts-ignore
-                        size: (22),
-                    }));
-                    const __VLS_151 = __VLS_150({
-                        size: (22),
-                    }, ...__VLS_functionalComponentArgsRest(__VLS_150));
-                }
-                else if (asset.type === 'video') {
-                    let __VLS_154;
-                    /** @ts-ignore @type { | typeof __VLS_components.Video} */
-                    Video;
                     // @ts-ignore
                     const __VLS_155 = __VLS_asFunctionalComponent1(__VLS_154, new __VLS_154({
                         // @ts-ignore
@@ -1576,10 +1576,10 @@ if (referencePickerOpen.value) {
                         size: (22),
                     }, ...__VLS_functionalComponentArgsRest(__VLS_155));
                 }
-                else {
+                else if (asset.type === 'video') {
                     let __VLS_159;
-                    /** @ts-ignore @type { | typeof __VLS_components.Image} */
-                    Image;
+                    /** @ts-ignore @type { | typeof __VLS_components.Video} */
+                    Video;
                     // @ts-ignore
                     const __VLS_160 = __VLS_asFunctionalComponent1(__VLS_159, new __VLS_159({
                         // @ts-ignore
@@ -1588,6 +1588,19 @@ if (referencePickerOpen.value) {
                     const __VLS_161 = __VLS_160({
                         size: (22),
                     }, ...__VLS_functionalComponentArgsRest(__VLS_160));
+                }
+                else {
+                    let __VLS_164;
+                    /** @ts-ignore @type { | typeof __VLS_components.Image} */
+                    Image;
+                    // @ts-ignore
+                    const __VLS_165 = __VLS_asFunctionalComponent1(__VLS_164, new __VLS_164({
+                        // @ts-ignore
+                        size: (22),
+                    }));
+                    const __VLS_166 = __VLS_165({
+                        size: (22),
+                    }, ...__VLS_functionalComponentArgsRest(__VLS_165));
                 }
             }
             __VLS_asFunctionalElement1(__VLS_intrinsics.small, __VLS_intrinsics.small)({});
@@ -1601,17 +1614,17 @@ if (referencePickerOpen.value) {
             ...{ class: "reference-picker__state" },
         });
         /** @type {__VLS_StyleScopedClasses['reference-picker__state']} */ ;
-        let __VLS_164;
+        let __VLS_169;
         /** @ts-ignore @type { | typeof __VLS_components.FolderOpen} */
         FolderOpen;
         // @ts-ignore
-        const __VLS_165 = __VLS_asFunctionalComponent1(__VLS_164, new __VLS_164({
+        const __VLS_170 = __VLS_asFunctionalComponent1(__VLS_169, new __VLS_169({
             // @ts-ignore
             size: (24),
         }));
-        const __VLS_166 = __VLS_165({
+        const __VLS_171 = __VLS_170({
             size: (24),
-        }, ...__VLS_functionalComponentArgsRest(__VLS_165));
+        }, ...__VLS_functionalComponentArgsRest(__VLS_170));
     }
 }
 // @ts-ignore

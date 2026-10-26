@@ -4,21 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
+	_ "golang.org/x/image/webp"
+
 	"nova-creator-platform/services/api/internal/auth"
 )
 
 type authHandlers struct {
-	service *auth.Service
-	logger  *slog.Logger
+	service  *auth.Service
+	logger   *slog.Logger
+	maxBytes int64
 }
 
-func newAuthHandlers(service *auth.Service, logger *slog.Logger) authHandlers {
-	return authHandlers{service: service, logger: logger}
+func newAuthHandlers(service *auth.Service, logger *slog.Logger, maxBytes int64) authHandlers {
+	return authHandlers{service: service, logger: logger, maxBytes: maxBytes}
 }
 
 func (handlers authHandlers) Register(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +62,120 @@ func (handlers authHandlers) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: user, Msg: "获取成功"})
+}
+
+func (handlers authHandlers) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	var input auth.ProfileInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40003, Msg: "昵称参数不正确"})
+		return
+	}
+	updated, err := handlers.service.UpdateProfile(r.Context(), user.ID, input)
+	if err != nil {
+		handlers.writeProfileError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: updated, Msg: "个人资料已更新"})
+}
+
+func (handlers authHandlers) UpdateAvatar(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, handlers.maxBytes)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "头像文件无效或超过大小限制"})
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil || header.Size <= 0 || header.Size > handlers.maxBytes {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "请选择有效头像图片"})
+		return
+	}
+	defer file.Close()
+	headerBytes := make([]byte, 512)
+	readBytes, readErr := io.ReadFull(file, headerBytes)
+	if readErr != nil && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "头像文件无法读取"})
+		return
+	}
+	mimeType := http.DetectContentType(headerBytes[:readBytes])
+	if mimeType != "image/jpeg" && mimeType != "image/png" && mimeType != "image/webp" {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "头像仅支持 JPG、PNG 或 WebP"})
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "头像文件无法读取"})
+		return
+	}
+	if _, _, err := image.DecodeConfig(file); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "头像图片内容无效"})
+		return
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "头像文件无法读取"})
+		return
+	}
+	updated, err := handlers.service.UpdateAvatar(r.Context(), user.ID, mimeType, file)
+	if err != nil {
+		handlers.writeProfileError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: updated, Msg: "头像已更新"})
+}
+
+func (handlers authHandlers) RemoveAvatar(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	updated, err := handlers.service.RemoveAvatar(r.Context(), user.ID)
+	if err != nil {
+		handlers.writeProfileError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: updated, Msg: "头像已移除"})
+}
+
+func (handlers authHandlers) Avatar(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	avatar, err := handlers.service.OpenAvatar(r.Context(), user.ID)
+	if err != nil {
+		if errors.Is(err, auth.ErrAvatarMissing) {
+			writeJSON(w, http.StatusNotFound, response{Code: 40402, Msg: "头像不存在"})
+			return
+		}
+		handlers.writeProfileError(w, err)
+		return
+	}
+	defer avatar.Content.Close()
+	w.Header().Set("Content-Type", avatar.ContentType)
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	http.ServeContent(w, r, "avatar", avatar.UpdatedAt, avatar.Content)
+}
+
+func (handlers authHandlers) writeProfileError(w http.ResponseWriter, err error) {
+	if errors.Is(err, auth.ErrInvalidInput) || errors.Is(err, auth.ErrInvalidAvatar) {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40003, Msg: "请输入 2-32 位昵称并选择有效头像"})
+		return
+	}
+	handlers.logger.Error("profile request failed", "error", err)
+	writeJSON(w, http.StatusInternalServerError, response{Code: 50002, Msg: "个人资料服务暂时不可用"})
 }
 
 func (handlers authHandlers) RequireAuth(next http.Handler) http.Handler {
