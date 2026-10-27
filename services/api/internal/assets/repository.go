@@ -17,6 +17,10 @@ type Repository interface {
 	List(context.Context, string, Kind, Source, Status, string, int, int) (Page, error)
 	Find(context.Context, string, string) (Asset, error)
 	FindByID(context.Context, string) (Asset, error)
+	FindMany(context.Context, string, []string) ([]Asset, error)
+	Rename(context.Context, string, string, string) (Asset, error)
+	DeleteMany(context.Context, string, []string) ([]DeletedAsset, error)
+	Stats(context.Context, string) (Stats, error)
 }
 
 type PostgresRepository struct {
@@ -32,7 +36,7 @@ const generationColumns = `
 	coalesce(task.id::text,''),coalesce(task.status,''),coalesce(task.provider,''),coalesce(task.model,''),coalesce(task.prompt,''),
 	coalesce(task.parameters->>'size',''),coalesce(task.parameters->>'quality',''),coalesce((task.parameters->>'durationSeconds')::integer,0),
 	coalesce((task.parameters->>'soundEnabled')::boolean,false),coalesce((task.parameters->>'watermarkEnabled')::boolean,false),
-	coalesce(task.parameters->>'videoMode',''),jsonb_array_length(coalesce(task.parameters->'referenceAssetIds','[]'::jsonb)),
+	coalesce(task.parameters->>'videoMode',''),jsonb_array_length(CASE WHEN jsonb_typeof(task.parameters->'referenceAssetIds')='array' THEN task.parameters->'referenceAssetIds' ELSE '[]'::jsonb END),
 	coalesce(task.points_cost,0),coalesce(task.retry_count,0),coalesce(channel.name,''),coalesce(channel.protocol,''),
 	coalesce(task.upstream_task_id,''),task.created_at,task.started_at,task.completed_at,
 	CASE WHEN task.started_at IS NOT NULL AND task.completed_at IS NOT NULL THEN (extract(epoch FROM (task.completed_at-task.started_at))*1000)::bigint END,
@@ -43,11 +47,11 @@ const generationColumns = `
 		) ORDER BY reference_item.position)
 		FROM (
 			SELECT item.value->>'assetId' AS asset_id,item.value->>'role' AS role,item.position
-			FROM jsonb_array_elements(coalesce(task.parameters->'videoReferences','[]'::jsonb)) WITH ORDINALITY item(value,position)
+			FROM jsonb_array_elements(CASE WHEN jsonb_typeof(task.parameters->'videoReferences')='array' THEN task.parameters->'videoReferences' ELSE '[]'::jsonb END) WITH ORDINALITY item(value,position)
 			UNION ALL
 			SELECT image_id.value AS asset_id,'reference_image' AS role,image_id.position
-			FROM jsonb_array_elements_text(coalesce(task.parameters->'referenceAssetIds','[]'::jsonb)) WITH ORDINALITY image_id(value,position)
-			WHERE jsonb_array_length(coalesce(task.parameters->'videoReferences','[]'::jsonb))=0
+			FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(task.parameters->'referenceAssetIds')='array' THEN task.parameters->'referenceAssetIds' ELSE '[]'::jsonb END) WITH ORDINALITY image_id(value,position)
+			WHERE jsonb_array_length(CASE WHEN jsonb_typeof(task.parameters->'videoReferences')='array' THEN task.parameters->'videoReferences' ELSE '[]'::jsonb END)=0
 		) reference_item
 		JOIN media_assets reference ON reference.id=reference_item.asset_id::uuid AND reference.user_id=asset.user_id
 	),'[]'::jsonb)`
@@ -131,6 +135,64 @@ func (repository *PostgresRepository) FindByID(ctx context.Context, id string) (
 		return Asset{}, ErrNotFound
 	}
 	return asset, err
+}
+
+func (repository *PostgresRepository) FindMany(ctx context.Context, userID string, ids []string) ([]Asset, error) {
+	rows, err := repository.pool.Query(ctx, `SELECT `+assetColumns+` FROM media_assets asset WHERE asset.user_id=$1 AND asset.id=ANY($2::uuid[]) AND asset.status='ready' ORDER BY asset.created_at DESC,asset.id DESC`, userID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]Asset, 0, len(ids))
+	for rows.Next() {
+		asset, scanErr := scanAsset(rows, false)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, asset)
+	}
+	return result, rows.Err()
+}
+
+func (repository *PostgresRepository) Rename(ctx context.Context, userID, id, title string) (Asset, error) {
+	row := repository.pool.QueryRow(ctx, `
+		UPDATE media_assets SET title=$3 WHERE id=$1 AND user_id=$2
+		RETURNING id::text,kind,source,status,title,coalesce(original_name,''),coalesce(storage_key,''),coalesce(mime_type,''),size_bytes,width,height,duration_seconds,created_at,coalesce(error_message,'')
+	`, id, userID, title)
+	asset, err := scanAsset(row, false)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Asset{}, ErrNotFound
+	}
+	return asset, err
+}
+
+func (repository *PostgresRepository) DeleteMany(ctx context.Context, userID string, ids []string) ([]DeletedAsset, error) {
+	rows, err := repository.pool.Query(ctx, `DELETE FROM media_assets WHERE user_id=$1 AND id=ANY($2::uuid[]) RETURNING id::text,coalesce(storage_key,'')`, userID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	deleted := make([]DeletedAsset, 0, len(ids))
+	for rows.Next() {
+		var asset DeletedAsset
+		if err := rows.Scan(&asset.ID, &asset.StorageKey); err != nil {
+			return nil, err
+		}
+		deleted = append(deleted, asset)
+	}
+	return deleted, rows.Err()
+}
+
+func (repository *PostgresRepository) Stats(ctx context.Context, userID string) (Stats, error) {
+	row := repository.pool.QueryRow(ctx, `
+		SELECT count(*),coalesce(sum(size_bytes),0),
+		count(*) FILTER(WHERE kind='image'),count(*) FILTER(WHERE kind='video'),count(*) FILTER(WHERE kind='audio'),
+		count(*) FILTER(WHERE source='generated'),count(*) FILTER(WHERE source='uploaded')
+		FROM media_assets WHERE user_id=$1
+	`, userID)
+	var stats Stats
+	err := row.Scan(&stats.TotalCount, &stats.TotalBytes, &stats.ImageCount, &stats.VideoCount, &stats.AudioCount, &stats.GeneratedCount, &stats.UploadedCount)
+	return stats, err
 }
 
 type rowScanner interface {

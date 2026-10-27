@@ -59,6 +59,21 @@ export type AssetPage = {
   pageSize: number
 }
 
+export type AssetDownloadTicket = {
+  url: string
+  expiresAt: string
+}
+
+export type AssetStats = {
+  totalCount: number
+  totalBytes: number
+  imageCount: number
+  videoCount: number
+  audioCount: number
+  generatedCount: number
+  uploadedCount: number
+}
+
 export async function listAssets(params: { page: number; pageSize: number; type?: AssetType; source?: AssetSource; status?: AssetStatus; search?: string }) {
   const response = await http.get<ApiResponse<AssetPage>>("/assets", { params })
   return response.data.data
@@ -80,4 +95,29 @@ export async function getAssetContent(url: string) {
     timeout: 0,
   })
   return response.data
+}
+
+export async function createAssetDownloadTicket(assetId: string) {
+  const response = await http.post<ApiResponse<AssetDownloadTicket>>(`/assets/${encodeURIComponent(assetId)}/download-ticket`)
+  return response.data.data
+}
+
+export async function createAssetArchiveTicket(ids: string[]) {
+  const response = await http.post<ApiResponse<AssetDownloadTicket>>("/assets/archive-ticket", { ids })
+  return response.data.data
+}
+
+export async function getAssetStats() {
+  const response = await http.get<ApiResponse<AssetStats>>("/assets/stats")
+  return response.data.data
+}
+
+export async function renameAsset(assetId: string, title: string) {
+  const response = await http.patch<ApiResponse<Asset>>(`/assets/${encodeURIComponent(assetId)}`, { title })
+  return response.data.data
+}
+
+export async function deleteAssets(ids: string[]) {
+  const response = await http.post<ApiResponse<{ deleted: number }>>("/assets/batch-delete", { ids })
+  return response.data.data
 }

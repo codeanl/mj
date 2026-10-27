@@ -40,6 +40,22 @@ func (repository *captureRepository) FindByID(context.Context, string) (Asset, e
 	return Asset{}, ErrNotFound
 }
 
+func (repository *captureRepository) FindMany(context.Context, string, []string) ([]Asset, error) {
+	return nil, nil
+}
+
+func (repository *captureRepository) Rename(context.Context, string, string, string) (Asset, error) {
+	return Asset{}, nil
+}
+
+func (repository *captureRepository) DeleteMany(context.Context, string, []string) ([]DeletedAsset, error) {
+	return nil, nil
+}
+
+func (repository *captureRepository) Stats(context.Context, string) (Stats, error) {
+	return Stats{}, nil
+}
+
 func TestListValidatesAndPassesSourceFilter(t *testing.T) {
 	repository := &captureRepository{}
 	storage, err := NewLocalStorage(t.TempDir())
@@ -56,6 +72,14 @@ func TestListValidatesAndPassesSourceFilter(t *testing.T) {
 	}
 	if _, err := service.List(context.Background(), "user-1", "", Source("external"), "", "", 1, 8); !errors.Is(err, ErrInvalidAsset) {
 		t.Fatalf("expected invalid source error, got %v", err)
+	}
+}
+
+func TestListAcceptsHomeRecentPageSize(t *testing.T) {
+	repository := &captureRepository{}
+	service := NewService(repository, nil)
+	if _, err := service.List(context.Background(), "user-1", "", SourceGenerated, "", "", 1, 6); err != nil {
+		t.Fatalf("home recent page size should be accepted: %v", err)
 	}
 }
 
@@ -95,5 +119,17 @@ func TestParseMediaTypeSupportsVideoReferenceAudio(t *testing.T) {
 		if !ok || kind != expectedKind || extension == "" {
 			t.Fatalf("unexpected media mapping for %s: kind=%q extension=%q ok=%v", mimeType, kind, extension, ok)
 		}
+	}
+}
+
+func TestFindManyValidatesAndDeduplicatesIDs(t *testing.T) {
+	repository := &captureRepository{}
+	service := NewService(repository, nil)
+	validID := "e4307a99-29d2-4a18-b3ee-7517313db72d"
+	if _, err := service.FindMany(context.Background(), "user-1", []string{"invalid"}); !errors.Is(err, ErrInvalidAsset) {
+		t.Fatalf("invalid asset id must fail validation: %v", err)
+	}
+	if _, err := service.FindMany(context.Background(), "user-1", []string{validID, validID}); err != nil {
+		t.Fatalf("duplicate valid ids should be accepted: %v", err)
 	}
 }

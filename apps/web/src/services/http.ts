@@ -1,6 +1,11 @@
 import axios from "axios"
 
 export const ACCESS_TOKEN_KEY = "nova.access_token"
+let unauthorizedHandler: (() => void) | undefined
+
+export function setUnauthorizedHandler(handler: () => void) {
+  unauthorizedHandler = handler
+}
 
 export const http = axios.create({
   baseURL: "/api/v1",
@@ -17,7 +22,9 @@ http.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401 && !String(error.config?.url || "").includes("/auth/login")) {
+      const hadSession = Boolean(localStorage.getItem(ACCESS_TOKEN_KEY))
       localStorage.removeItem(ACCESS_TOKEN_KEY)
+      if (hadSession) unauthorizedHandler?.()
     }
     return Promise.reject(error)
   },

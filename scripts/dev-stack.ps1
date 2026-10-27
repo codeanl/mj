@@ -134,7 +134,8 @@ function Start-ManagedProcess {
     param(
         [string]$Name,
         [string]$FilePath,
-        [string[]]$ArgumentList,
+        [AllowEmptyCollection()]
+        [string[]]$ArgumentList = @(),
         [string]$WorkingDirectory
     )
 
@@ -146,7 +147,18 @@ function Start-ManagedProcess {
     Assert-PortAvailable $Services[$Name].Port
     $stdout = Join-Path $LogRoot "$Name.out.log"
     $stderr = Join-Path $LogRoot "$Name.err.log"
-    $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -WorkingDirectory $WorkingDirectory -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    $startParameters = @{
+        FilePath = $FilePath
+        WorkingDirectory = $WorkingDirectory
+        WindowStyle = "Hidden"
+        RedirectStandardOutput = $stdout
+        RedirectStandardError = $stderr
+        PassThru = $true
+    }
+    if ($ArgumentList.Count -gt 0) {
+        $startParameters.ArgumentList = $ArgumentList
+    }
+    $process = Start-Process @startParameters
     Set-Content -LiteralPath $Services[$Name].PidFile -Value $process.Id -Encoding ASCII
     Write-Host "Started $name on port $($Services[$Name].Port) (PID $($process.Id))."
 }

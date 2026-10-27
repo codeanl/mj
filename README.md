@@ -1,10 +1,11 @@
 # Nova Creator Platform
 
-独立的 AI 创作平台，包含 Vue 3 用户端、Vue 3 管理端与 Go API。
+独立的 AI 创作平台，包含 Vue 3 用户端、Electron Windows 客户端、Vue 3 管理端与 Go API。
 
 ## 技术栈
 
 - 用户端与管理端：Vue 3、Vite、TypeScript、Vue Router、Pinia、Element Plus、Lucide。
+- Windows 客户端：Electron、electron-builder，与网站共用用户端页面和 Go API。
 - API：Go、Chi、pgx、go-redis、bcrypt、JWT、结构化日志和优雅关闭。
 - 基础设施：PostgreSQL、Redis、MinIO/S3，开发环境由 Docker Compose 提供。
 - 接口约定：统一使用 `/api/v1` 前缀与 `{ code, data, msg }` 响应结构。
@@ -14,6 +15,7 @@
 ```text
 apps/web        用户端，默认端口 5173
 apps/admin      管理端，默认端口 5174
+apps/desktop    Electron Windows 客户端
 services/api    Go API，默认端口 8080
 ```
 
@@ -44,11 +46,44 @@ Windows 下可在项目目录运行：
 
 也可以使用 `scripts\dev-stack.cmd start|status|restart|stop`。脚本管理 API `8080`、用户端 `5173` 和管理端 `5174`，日志写入 `.artifacts/runtime/`，PID 与编译后的 API 写入 `.data/runtime/`。`start` 会启动 PostgreSQL 和 Redis；`stop` 默认保留数据库容器与数据，附加 `-StopInfrastructure` 才会停止容器。可在被 Git 忽略的 `.env.local` 中覆盖 `.env.example` 中的环境变量。
 
+## Windows 客户端
+
+桌面客户端将用户端生产资源打入 Electron，通过应用内部的本地同源代理访问已部署的 API。数据库、Redis、管理后台和生成 Worker 继续运行在服务器，不会打进用户的 EXE。
+
+本地 API 已启动时，可以预览桌面客户端：
+
+```powershell
+pnpm dev:desktop
+```
+
+生成 Windows 安装版和便携版 EXE：
+
+```powershell
+pnpm package:desktop -- --api-origin https://api.example.com
+```
+
+`--api-origin` 必须是没有路径的 HTTP(S) 服务端地址。产物写入 `dist/desktop/`。未传参数时默认连接 `http://127.0.0.1:8080`，仅适合本地测试。
+
+安装后如需临时覆盖服务端地址，可以设置 `NOVA_DESKTOP_API_ORIGIN` 环境变量，或在 EXE 同目录放置 `nova-desktop.json`：
+
+```json
+{
+  "apiOrigin": "https://api.example.com",
+  "localPort": 41731
+}
+```
+
+`localPort` 是客户端内置页面的固定回环端口，用于让登录状态在应用重启后继续有效；同一台电脑上的多个客户端配置必须使用不同端口。
+
 ## 认证接口
 
 - `POST /api/v1/auth/register`：使用邮箱、用户名和密码注册。
 - `POST /api/v1/auth/login`：登录并签发 JWT Access Token。
 - `GET /api/v1/auth/me`：读取当前用户。
+- `POST /api/v1/auth/logout`：撤销当前登录会话。
+- `PATCH /api/v1/profile/password`：验证当前密码后修改密码，并撤销其他登录会话。
+- `GET/DELETE /api/v1/profile/sessions`：查看登录设备或撤销指定设备；`POST /profile/sessions/revoke-others` 撤销其他设备。
+- `GET/POST/DELETE /api/v1/profile/deletion-request`：查看、提交或撤销账号注销申请。
 
 管理端使用同一登录接口，但 `/api/v1/admin/*` 额外要求 `role=admin`。数据库没有管理员时，迁移会将最早注册账号设为初始管理员。
 
@@ -71,9 +106,15 @@ Windows 下可在项目目录运行：
 
 ## 素材接口
 
-- `GET /api/v1/assets`：按当前用户分页查询，支持 `type=image|video`、`source=generated|uploaded` 与 `search`。
+- `GET /api/v1/assets`：按当前用户分页查询，支持 `type=image|video|audio`、`source=generated|uploaded`、`status` 与 `search`。
+- `GET /api/v1/assets/stats`：读取当前用户的素材数量、类型、来源和存储占用统计。
 - `POST /api/v1/assets`：使用 `multipart/form-data` 上传图片、视频或音频。
+- `PATCH /api/v1/assets/{id}`：重命名当前用户素材。
+- `POST /api/v1/assets/batch-delete`：批量删除当前用户素材及本地派生文件。
 - `GET /api/v1/assets/{id}/content`：受保护的素材预览与下载。
+- `POST /api/v1/assets/{id}/download-ticket`：为当前用户签发短时素材下载地址。
+- `GET /api/v1/assets/{id}/download?ticket=...`：使用短时票据流式下载素材，支持 Range，不占用浏览器整文件 Blob 内存。
+- `POST /api/v1/assets/archive-ticket` 与 `GET /api/v1/assets/archive/download`：签发短时批量票据并流式输出 ZIP。
 
 ## 生成接口
 

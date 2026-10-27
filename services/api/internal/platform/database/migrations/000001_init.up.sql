@@ -44,6 +44,29 @@ SELECT setval('users_public_id_seq', greatest(coalesce((SELECT max(public_id) FR
 ALTER TABLE users ALTER COLUMN public_id SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_public_id_unique ON users (public_id);
 
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id uuid PRIMARY KEY,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_agent text NOT NULL DEFAULT '',
+    ip_address text NOT NULL DEFAULT '',
+    expires_at timestamptz NOT NULL,
+    last_seen_at timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    revoked_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS user_sessions_user_created_idx ON user_sessions (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS user_sessions_active_idx ON user_sessions (user_id, expires_at) WHERE revoked_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS account_deletion_requests (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status text NOT NULL DEFAULT 'pending',
+    requested_at timestamptz NOT NULL DEFAULT now(),
+    cancelled_at timestamptz,
+    CONSTRAINT account_deletion_requests_status_check CHECK (status IN ('pending', 'cancelled', 'completed'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS account_deletion_requests_pending_user_unique ON account_deletion_requests (user_id) WHERE status = 'pending';
+
 UPDATE users
 SET role = 'admin', updated_at = now()
 WHERE id = (SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1)

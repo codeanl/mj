@@ -162,7 +162,7 @@ func containsFold(values []string, value string) bool {
 
 func normalizeVideoReferences(mode string, values []VideoReference) ([]VideoReference, bool) {
 	if mode == VideoModeText {
-		return nil, len(values) == 0
+		return []VideoReference{}, len(values) == 0
 	}
 	if mode != VideoModeFrames && mode != VideoModeReference && !isSpecialVideoMode(mode) {
 		return nil, false

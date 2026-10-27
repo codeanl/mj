@@ -39,8 +39,14 @@ export const useAuthStore = defineStore("auth", {
       const result = await authApi.login(input)
       this.applySession(result)
     },
-    logout() {
-      this.clearSession()
+    async logout() {
+      try {
+        await authApi.logout()
+      } catch {
+        // Local logout must still complete if the session already expired.
+      } finally {
+        this.clearSession()
+      }
     },
     setPointsBalance(pointsBalance: number) {
       if (this.user) this.user = { ...this.user, pointsBalance }

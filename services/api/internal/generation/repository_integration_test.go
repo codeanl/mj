@@ -2,6 +2,7 @@ package generation
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -186,5 +187,92 @@ func TestCreateVideoCreatesOneTaskAndChargesOnce(t *testing.T) {
 	}
 	if balance != 20 || refundCount != 1 {
 		t.Fatalf("unexpected refund result: balance=%v refunds=%d", balance, refundCount)
+	}
+}
+
+func TestCreateSpecialVideoModesPersistReferences(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	userID, channelID := uuid.NewString(), uuid.NewString()
+	imageID, videoID, audioID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	if _, err = pool.Exec(ctx, `INSERT INTO users (id,email,username,password_hash,points_balance) VALUES ($1,$2,'special-video-test','test',20)`, userID, "generation-special-"+uuid.NewString()+"@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO model_channels (id,name,base_url,protocol,enabled) VALUES ($1,'special-video-channel','https://example.com','custom',true)`, channelID); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+		_, _ = pool.Exec(ctx, `DELETE FROM model_channels WHERE id=$1`, channelID)
+	}()
+	fixtures := []struct {
+		id, kind, name, mimeType, extension string
+	}{
+		{id: imageID, kind: "image", name: "person.png", mimeType: "image/png", extension: ".png"},
+		{id: videoID, kind: "video", name: "source.mp4", mimeType: "video/mp4", extension: ".mp4"},
+		{id: audioID, kind: "audio", name: "voice.mp3", mimeType: "audio/mpeg", extension: ".mp3"},
+	}
+	for _, fixture := range fixtures {
+		if _, err = pool.Exec(ctx, `INSERT INTO media_assets (id,user_id,kind,source,status,title,original_name,storage_key,mime_type,size_bytes,width,height) VALUES ($1,$2,$3,'uploaded','ready','special reference',$4,$5,$6,5,1,1)`, fixture.id, userID, fixture.kind, fixture.name, fixture.id+fixture.extension, fixture.mimeType); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		mode       string
+		references []VideoReference
+	}{
+		{mode: "extend", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}}},
+		{mode: "edit", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}}},
+		{mode: "lip_sync", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}, {AssetID: audioID, Role: VideoRoleAudio}}},
+		{mode: "motion_transfer", references: []VideoReference{{AssetID: imageID, Role: VideoRoleImage}, {AssetID: videoID, Role: VideoRoleVideo}}},
+	}
+	repository := NewRepository(pool)
+	for index, test := range tests {
+		normalized, ok := normalizeVideoReferences(test.mode, test.references)
+		if !ok {
+			t.Fatalf("normalize %s references", test.mode)
+		}
+		options := VideoOptions{ChannelID: channelID, Model: "special-video", Ratio: "16:9", Resolution: "1080P", DurationSeconds: 8, Mode: test.mode}
+		task, remaining, createErr := repository.CreateVideo(ctx, userID, uuid.NewString(), test.mode+" prompt", options, normalized, 1)
+		if createErr != nil {
+			t.Fatalf("create %s: %v", test.mode, createErr)
+		}
+		if task.VideoMode != test.mode || remaining != float64(19-index) {
+			t.Fatalf("unexpected %s task: %#v remaining=%v", test.mode, task, remaining)
+		}
+		stored, referenceErr := repository.GetReferences(ctx, task)
+		if referenceErr != nil || len(stored) != len(test.references) {
+			t.Fatalf("stored %s references: %#v err=%v", test.mode, stored, referenceErr)
+		}
+		for referenceIndex := range stored {
+			if stored[referenceIndex].Role != test.references[referenceIndex].Role {
+				t.Fatalf("%s reference %d role=%q", test.mode, referenceIndex, stored[referenceIndex].Role)
+			}
+		}
+	}
+	invalidOptions := VideoOptions{ChannelID: channelID, Model: "special-video", Ratio: "16:9", Resolution: "1080P", DurationSeconds: 8, Mode: "extend"}
+	if _, _, invalidErr := repository.CreateVideo(ctx, userID, uuid.NewString(), "invalid extend reference", invalidOptions, []VideoReference{{AssetID: videoID, Role: VideoRoleImage}}, 1); !errors.Is(invalidErr, ErrInvalidVideoReference) {
+		t.Fatalf("repository should reject mismatched reference role before billing: %v", invalidErr)
+	}
+	var balance float64
+	var consumeCount int
+	if err = pool.QueryRow(ctx, `SELECT points_balance FROM users WHERE id=$1`, userID).Scan(&balance); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM point_transactions WHERE user_id=$1 AND type='consume'`, userID).Scan(&consumeCount); err != nil {
+		t.Fatal(err)
+	}
+	if balance != 16 || consumeCount != len(tests) {
+		t.Fatalf("unexpected special mode billing: balance=%v consumes=%d", balance, consumeCount)
 	}
 }

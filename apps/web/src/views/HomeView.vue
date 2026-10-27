@@ -1,29 +1,27 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
-import { useIntervalFn } from "@vueuse/core"
+import { useDebounceFn, useIntervalFn } from "@vueuse/core"
 import {
   ArrowRight,
-  Bell,
   ChevronDown,
   Clock3,
   Image,
   FolderOpen,
   LoaderCircle,
   Music,
-  Moon,
   Paperclip,
   Play,
   Plus,
+  RefreshCcw,
+  Search,
   Sparkles,
-  Sun,
   Type,
   Video,
   X,
 } from "@lucide/vue"
 import { useAuthStore } from "@/stores/auth"
 import AssetPreviewDialog from "@/components/AssetPreviewDialog.vue"
-import UserAvatar from "@/components/UserAvatar.vue"
 import * as assetApi from "@/services/assets"
 import {
   createImageGeneration,
@@ -39,11 +37,19 @@ import { notification } from "@/services/notifications"
 const authStore = useAuthStore()
 const router = useRouter()
 const sameParametersStorageKey = "nova.same-generation-parameters"
+const creationDraftStorageKey = computed(() => `nova.creation-draft:${authStore.user?.id || "anonymous"}`)
+const recentWorkLimit = 6
+type HeroSlide = { type: "image" | "video"; src: string }
+const heroSlides: HeroSlide[] = [
+  { type: "video", src: "/hero/hero-video-1.mp4" },
+  { type: "video", src: "/hero/hero-video-2.mp4" },
+  { type: "video", src: "/hero/hero-video-3.mp4" },
+]
 
 const creationTypes = [
   { id: "image", label: "图片生成", icon: Image },
   { id: "video", label: "视频生成", icon: Video },
-]
+] as const
 
 const defaultCapabilities: GenerationCapabilities = {
   image: {
@@ -61,7 +67,7 @@ const defaultCapabilities: GenerationCapabilities = {
 	video: { enabled: false, models: [], sizes: [{value:"adaptive",label:"自适应",width:0,height:0},{value:"21:9",label:"21:9",width:0,height:0},{value:"16:9",label:"16:9",width:0,height:0},{value:"4:3",label:"4:3",width:0,height:0},{value:"1:1",label:"1:1",width:0,height:0},{value:"3:4",label:"3:4",width:0,height:0},{value:"9:16",label:"9:16",width:0,height:0}], qualities: [{value:"480P",label:"480P"},{value:"768P",label:"768P"},{value:"1080P",label:"1080P"},{value:"2K",label:"2K"},{value:"4K",label:"4K"}], durations:Array.from({length:27},(_,index)=>({value:String(index+4),label:`${index+4}秒`})) },
 }
 
-const activeType = ref("image")
+const activeType = ref<"image" | "video">("image")
 const prompt = ref("")
 const capabilities = ref<GenerationCapabilities>(defaultCapabilities)
 const videoCatalog = ref<PublicModel[]>([])
@@ -79,13 +85,21 @@ type ReferenceDraft = { key: string; file?: File; name: string; previewUrl: stri
 const references = ref<ReferenceDraft[]>([])
 const referencePickerOpen = ref(false)
 const referencePickerLoading = ref(false)
+const referencePickerLoadingMore = ref(false)
 const referencePickerAssets = ref<assetApi.Asset[]>([])
 const referencePickerUrls = ref<Record<string, string>>({})
-const darkMode = ref(false)
+const referencePickerSearch = ref("")
+const referencePickerPage = ref(0)
+const referencePickerTotal = ref(0)
+const referencePickerLoadedCount = ref(0)
 const creating = ref(false)
+const draftRestored = ref(false)
 const pendingRequestId = ref("")
 const pendingRequestSignature = ref("")
-const modelsLoading = ref(true)
+const imageModelsLoading = ref(true)
+const videoModelsLoading = ref(true)
+const imageModelsFailed = ref(false)
+const videoModelsFailed = ref(false)
 const recentLoading = ref(true)
 const recentRefreshing = ref(false)
 const recentWorks = ref<assetApi.Asset[]>([])
@@ -95,10 +109,32 @@ const selectedRecent = ref<assetApi.Asset | null>(null)
 const recentDetailUrl = ref("")
 let recentDetailObjectUrl = ""
 const showHeroBackdrop = ref(false)
+const activeHeroIndex = ref(0)
+const readyHeroIndexes = ref<number[]>([])
+const heroPaused = ref(false)
 let recentLoadSequence = 0
+let referencePickerLoadSequence = 0
 let heroIdleHandle: number | undefined
+let heroRotationTimer: number | undefined
+const heroPreloads = new Map<number, Promise<boolean>>()
+const heroVideoElements = new Map<number, HTMLVideoElement>()
+
+type CreationDraft = {
+  prompt: string
+  activeType: "image" | "video"
+  model: string
+  size: string
+  quality: string
+  count: number
+  duration: number
+  videoMode: VideoGenerationMode
+  soundEnabled: boolean
+  watermarkEnabled: boolean
+}
 
 const currentCapability = computed(() => capabilities.value[activeType.value as keyof GenerationCapabilities])
+const modelsLoading = computed(() => activeType.value === "video" ? videoModelsLoading.value : imageModelsLoading.value)
+const currentModelsFailed = computed(() => activeType.value === "video" ? videoModelsFailed.value : imageModelsFailed.value)
 const selectedVideoProfile = computed(() => videoCatalog.value.find((model) => model.id === selectedModel.value)?.capabilityConfig)
 const videoModes: Array<{ value: VideoGenerationMode; label: string }> = [
   { value: "text", label: "文生视频" },
@@ -114,6 +150,12 @@ const availableVideoModes = computed(() => {
 	return !allowed?.length ? videoModes.slice(0,3) : videoModes.filter((mode)=>allowed.includes(mode.value))
 })
 const referenceLimit = computed(() => activeType.value === "image" ? 3 : videoMode.value === "frames" ? 2 : videoMode.value === "reference" ? 12 : videoMode.value === "text" ? 0 : 12)
+const referencePickerType = computed<assetApi.AssetType | undefined>(() => {
+  if (activeType.value === "image" || videoMode.value === "frames") return "image"
+  if (videoMode.value === "extend" || videoMode.value === "edit") return "video"
+  return undefined
+})
+const referencePickerHasMore = computed(() => referencePickerLoadedCount.value < referencePickerTotal.value)
 const referenceAccept = computed(() => activeType.value === "image" || videoMode.value === "frames"
   ? "image/jpeg,image/png,image/webp"
   : "image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/flac")
@@ -154,6 +196,11 @@ watch(selectedVideoProfile, (profile) => {
 	if(!profile.supportsWatermark)watermarkEnabled.value=false
 },{immediate:true})
 
+const saveCreationDraft = useDebounceFn(persistCreationDraft, 250)
+watch([prompt, activeType, selectedModel, selectedSize, selectedQuality, selectedCount, selectedDuration, videoMode, soundEnabled, watermarkEnabled], () => {
+  if (draftRestored.value) void saveCreationDraft()
+})
+
 const promptPlaceholder = computed(() => {
   const labels: Record<string, string> = {
     image: "描述你希望生成的画面、风格与构图…",
@@ -162,10 +209,119 @@ const promptPlaceholder = computed(() => {
   return labels[activeType.value]
 })
 
-function selectCreationType(id: string) {
+function selectCreationType(id: "image" | "video") {
   if (activeType.value !== id) clearReferencePreviews()
   activeType.value = id
   applyCapabilityDefaults()
+}
+
+function preloadHeroSlide(index: number) {
+  if (readyHeroIndexes.value.includes(index)) return Promise.resolve(true)
+  const existing = heroPreloads.get(index)
+  if (existing) return existing
+  const pending = new Promise<boolean>((resolve) => {
+    const markReady = () => {
+      readyHeroIndexes.value = [...readyHeroIndexes.value, index]
+      heroPreloads.delete(index)
+      resolve(true)
+    }
+    const markFailed = () => {
+      heroPreloads.delete(index)
+      resolve(false)
+    }
+    const slide = heroSlides[index]
+    if (slide.type === "image") {
+      const image = new window.Image()
+      image.onload = markReady
+      image.onerror = markFailed
+      image.src = slide.src
+      return
+    }
+    const video = document.createElement("video")
+    video.preload = "auto"
+    video.muted = true
+    video.playsInline = true
+    video.onloadeddata = markReady
+    video.onerror = markFailed
+    video.src = slide.src
+    video.load()
+  })
+  heroPreloads.set(index, pending)
+  return pending
+}
+
+function stopHeroRotation() {
+  if (heroRotationTimer !== undefined) window.clearTimeout(heroRotationTimer)
+  heroRotationTimer = undefined
+}
+
+function scheduleHeroRotation() {
+  stopHeroRotation()
+  if (heroPaused.value || document.hidden || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+  if (heroSlides[activeHeroIndex.value].type === "video") {
+    syncHeroMediaPlayback()
+    return
+  }
+  heroRotationTimer = window.setTimeout(() => void advanceHeroSlide(), 8000)
+}
+
+async function advanceHeroSlide() {
+  const nextIndex = (activeHeroIndex.value + 1) % heroSlides.length
+  if (!(await preloadHeroSlide(nextIndex))) return scheduleHeroRotation()
+  activeHeroIndex.value = nextIndex
+  await nextTick()
+  syncHeroMediaPlayback(true)
+  void preloadHeroSlide((nextIndex + 1) % heroSlides.length)
+  scheduleHeroRotation()
+}
+
+async function selectHeroSlide(index: number) {
+  if (index === activeHeroIndex.value || !(await preloadHeroSlide(index))) return
+  activeHeroIndex.value = index
+  await nextTick()
+  syncHeroMediaPlayback(true)
+  void preloadHeroSlide((index + 1) % heroSlides.length)
+  scheduleHeroRotation()
+}
+
+function setHeroVideoRef(element: unknown, index: number) {
+  if (element instanceof HTMLVideoElement) {
+    heroVideoElements.set(index, element)
+    syncHeroMediaPlayback()
+  } else {
+    heroVideoElements.delete(index)
+  }
+}
+
+function syncHeroMediaPlayback(restart = false) {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  heroVideoElements.forEach((video, index) => {
+    const active = index === activeHeroIndex.value
+    if (!active || heroPaused.value || document.hidden || reduceMotion) {
+      video.pause()
+      if (!active) video.currentTime = 0
+      return
+    }
+    if (restart) video.currentTime = 0
+    void video.play().catch(() => {})
+  })
+}
+
+function handleHeroVideoEnded(index: number) {
+  if (index === activeHeroIndex.value && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) void advanceHeroSlide()
+}
+
+function setHeroPaused(paused: boolean) {
+  heroPaused.value = paused
+  if (paused) stopHeroRotation()
+  syncHeroMediaPlayback()
+  if (!paused) scheduleHeroRotation()
+}
+
+function handleHeroVisibility() {
+  if (document.hidden) stopHeroRotation()
+  syncHeroMediaPlayback()
+  if (!document.hidden) scheduleHeroRotation()
 }
 
 function selectVideoMode(mode: VideoGenerationMode) {
@@ -231,7 +387,7 @@ async function startCreation() {
     recentWorks.value = [
       ...pendingAssets,
       ...recentWorks.value.filter((work) => !pendingIDs.has(work.id)),
-    ].slice(0, 8)
+    ].slice(0, recentWorkLimit)
     authStore.setPointsBalance(batch.pointsRemaining)
 	pendingRequestId.value="";pendingRequestSignature.value=""
 	notification.success(activeType.value==="video"?"视频生成任务已创建":`${batch.tasks.length} 张图片生成任务已创建`)
@@ -246,8 +402,13 @@ async function startCreation() {
 function openReferencePicker() {
   if (referenceLimit.value <= 0) return
   referencePickerOpen.value = true
+  referencePickerSearch.value = ""
   void loadReferencePickerAssets()
 }
+
+const searchReferencePicker = useDebounceFn(() => {
+  if (referencePickerOpen.value) void loadReferencePickerAssets()
+}, 300)
 
 function chooseReference() {
   closeReferencePicker()
@@ -310,26 +471,49 @@ function referenceKindAllowed(kind: ReferenceKind) {
 	return references.value.filter((reference) => reference.kind === kind).length < maximum && references.value.length < referenceLimit.value
 }
 
-async function loadReferencePickerAssets() {
-	referencePickerLoading.value = true
-	revokeReferencePickerUrls()
+async function loadReferencePickerAssets(options: { append?: boolean } = {}) {
+	if (options.append && (referencePickerLoading.value || referencePickerLoadingMore.value || !referencePickerHasMore.value)) return
+	const sequence = ++referencePickerLoadSequence
+	const targetPage = options.append ? referencePickerPage.value + 1 : 1
+	if (options.append) referencePickerLoadingMore.value = true
+	else {
+		referencePickerLoading.value = true
+		referencePickerPage.value = 0
+		referencePickerTotal.value = 0
+		referencePickerLoadedCount.value = 0
+		referencePickerAssets.value = []
+		revokeReferencePickerUrls()
+	}
 	try {
-		const page = await assetApi.listAssets({ page: 1, pageSize: 12, type: activeType.value === "image" || videoMode.value === "frames" ? "image" : undefined })
-		referencePickerAssets.value = page.items.filter((asset) => asset.status === "ready" && !references.value.some((reference) => reference.assetId === asset.id) && referenceKindAllowed(asset.type))
-		const entries = await Promise.all(referencePickerAssets.value.map(async (asset) => {
+		const page = await assetApi.listAssets({ page: targetPage, pageSize: 12, type: referencePickerType.value, status: "ready", search: referencePickerSearch.value.trim() || undefined })
+		if (sequence !== referencePickerLoadSequence || !referencePickerOpen.value) return
+		const nextAssets = page.items.filter((asset) => !references.value.some((reference) => reference.assetId === asset.id) && referenceKindAllowed(asset.type))
+		const entries = await Promise.all(nextAssets.map(async (asset) => {
 			if (asset.type === "audio") return [asset.id, ""] as const
-			const source = asset.type === "image" ? `${asset.url}?thumbnail=1` : asset.posterUrl
+			const source = asset.type === "image" ? `${asset.url}${asset.url.includes("?") ? "&" : "?"}thumbnail=1` : asset.posterUrl
 			if (!source) return [asset.id, ""] as const
 			try {
 				const blob = await assetApi.getAssetContent(source)
 				return [asset.id, URL.createObjectURL(blob)] as const
 			} catch { return [asset.id, ""] as const }
 		}))
-		referencePickerUrls.value = Object.fromEntries(entries)
+		if (sequence !== referencePickerLoadSequence || !referencePickerOpen.value) {
+			entries.forEach(([, url]) => url && URL.revokeObjectURL(url))
+			return
+		}
+		const existingIDs = new Set(referencePickerAssets.value.map((asset) => asset.id))
+		referencePickerAssets.value = options.append ? [...referencePickerAssets.value, ...nextAssets.filter((asset) => !existingIDs.has(asset.id))] : nextAssets
+		referencePickerUrls.value = options.append ? { ...referencePickerUrls.value, ...Object.fromEntries(entries) } : Object.fromEntries(entries)
+		referencePickerPage.value = targetPage
+		referencePickerTotal.value = page.total
+		referencePickerLoadedCount.value = options.append ? referencePickerLoadedCount.value + page.items.length : page.items.length
 	} catch (error) {
-		notification.error(apiErrorMessage(error, "素材库加载失败"))
+		if (sequence === referencePickerLoadSequence && referencePickerOpen.value) notification.error(apiErrorMessage(error, "素材库加载失败"))
 	} finally {
-		referencePickerLoading.value = false
+		if (sequence === referencePickerLoadSequence) {
+			referencePickerLoading.value = false
+			referencePickerLoadingMore.value = false
+		}
 	}
 }
 
@@ -338,7 +522,8 @@ function selectExistingReference(asset: assetApi.Asset) {
 	const previewUrl = referencePickerUrls.value[asset.id] || ""
 	delete referencePickerUrls.value[asset.id]
 	references.value.push({ key: `asset:${asset.id}`, name: asset.title, previewUrl, previewIsImage: asset.type !== "audio", assetId: asset.id, kind: asset.type, role: roleForReference(asset.type) })
-	closeReferencePicker()
+	referencePickerAssets.value = referencePickerAssets.value.filter((item) => item.id !== asset.id && referenceKindAllowed(item.type))
+	if (references.value.length >= referenceLimit.value) closeReferencePicker()
 }
 
 function revokeReferencePickerUrls() {
@@ -347,7 +532,10 @@ function revokeReferencePickerUrls() {
 }
 
 function closeReferencePicker() {
+	referencePickerLoadSequence++
 	referencePickerOpen.value = false
+	referencePickerLoading.value = false
+	referencePickerLoadingMore.value = false
 	revokeReferencePickerUrls()
 }
 
@@ -359,14 +547,54 @@ function applyCapabilityDefaults() {
 	selectedDuration.value=Number(capability?.durations?.[0]?.value||5)
 }
 
+function persistCreationDraft() {
+  if (!draftRestored.value) return
+  const draft: CreationDraft = {
+    prompt: prompt.value,
+    activeType: activeType.value === "video" ? "video" : "image",
+    model: selectedModel.value,
+    size: selectedSize.value,
+    quality: selectedQuality.value,
+    count: selectedCount.value,
+    duration: selectedDuration.value,
+    videoMode: videoMode.value,
+    soundEnabled: soundEnabled.value,
+    watermarkEnabled: watermarkEnabled.value,
+  }
+  localStorage.setItem(creationDraftStorageKey.value, JSON.stringify(draft))
+}
+
+async function restoreCreationDraft() {
+  const raw = localStorage.getItem(creationDraftStorageKey.value)
+  if (!raw) return
+  try {
+    const draft = JSON.parse(raw) as Partial<CreationDraft>
+    activeType.value = draft.activeType === "video" ? "video" : "image"
+    const capability = capabilities.value[activeType.value]
+    selectedModel.value = capability.models.some((option) => option.value === draft.model) ? draft.model || "" : capability.models[0]?.value || ""
+    await nextTick()
+    selectedSize.value = capability.sizes.some((option) => option.value === draft.size) ? draft.size || "" : capability.sizes[0]?.value || ""
+    selectedQuality.value = capability.qualities.some((option) => option.value === draft.quality) ? draft.quality || "" : capability.qualities[0]?.value || ""
+    selectedCount.value = Number.isInteger(draft.count) && Number(draft.count) >= 1 && Number(draft.count) <= 4 ? Number(draft.count) : 1
+    const durations = capability.durations || []
+    selectedDuration.value = durations.some((option) => Number(option.value) === Number(draft.duration)) ? Number(draft.duration) : Number(durations[0]?.value || 5)
+    videoMode.value = availableVideoModes.value.some((mode) => mode.value === draft.videoMode) ? draft.videoMode || "text" : availableVideoModes.value[0]?.value || "text"
+    prompt.value = typeof draft.prompt === "string" ? draft.prompt : ""
+    soundEnabled.value = draft.soundEnabled !== false && selectedVideoProfile.value?.supportsSound !== false
+    watermarkEnabled.value = draft.watermarkEnabled === true && selectedVideoProfile.value?.supportsWatermark !== false
+  } catch {
+    localStorage.removeItem(creationDraftStorageKey.value)
+  }
+}
+
 async function loadRecentWorks(options: { silent?: boolean } = {}) {
   const sequence = ++recentLoadSequence
   if (options.silent) recentRefreshing.value = true
   else recentLoading.value = true
   try {
-    const page = await assetApi.listAssets({ page: 1, pageSize: 8, source: "generated" })
+    const page = await assetApi.listAssets({ page: 1, pageSize: recentWorkLimit, source: "generated" })
     if (sequence !== recentLoadSequence) return
-    const nextWorks = page.items.slice(0, 8)
+    const nextWorks = page.items.slice(0, recentWorkLimit)
     const refunded = nextWorks.some((work) => work.status === "failed" && recentWorks.value.find((current) => current.id === work.id)?.status === "generating")
     recentWorks.value = nextWorks
     if (refunded) void authStore.refreshPointsBalance()
@@ -415,20 +643,50 @@ async function loadRecentPreviewUrls(works: assetApi.Asset[], sequence: number) 
 }
 
 async function loadModels() {
-  modelsLoading.value = true
+  await Promise.allSettled([loadImageModels(), loadVideoModels()])
+}
+
+async function loadImageModels() {
+  imageModelsLoading.value = true
+  imageModelsFailed.value = false
   try {
-	  const [images,videos] = await Promise.all([listImageModels(),listVideoModels()])
-	  videoCatalog.value=videos
-	  capabilities.value.image.models = images.map((model) => ({ value: model.id, label: model.displayName }))
-	  capabilities.value.video.models = videos.map((model) => ({ value: model.id, label: model.displayName }));capabilities.value.video.enabled=videos.length>0
-	  const current=activeType.value==="video"?videos:images;if (!current.some((model) => model.id === selectedModel.value)) selectedModel.value = current[0]?.id || ""
+    const images = await listImageModels()
+    capabilities.value.image.models = images.map((model) => ({ value: model.id, label: model.displayName }))
+    if (activeType.value === "image" && !images.some((model) => model.id === selectedModel.value)) selectedModel.value = images[0]?.id || ""
   } catch (error) {
     capabilities.value.image.models = []
-    selectedModel.value = ""
-    notification.error(apiErrorMessage(error, "图片模型加载失败"))
+    imageModelsFailed.value = true
+    if (activeType.value === "image") selectedModel.value = ""
+    notification.error(`图片模型加载失败：${apiErrorMessage(error, "请稍后重试")}`)
   } finally {
-    modelsLoading.value = false
+    imageModelsLoading.value = false
   }
+}
+
+async function loadVideoModels() {
+  videoModelsLoading.value = true
+  videoModelsFailed.value = false
+  try {
+    const videos = await listVideoModels()
+    videoCatalog.value = videos
+    capabilities.value.video.models = videos.map((model) => ({ value: model.id, label: model.displayName }))
+    capabilities.value.video.enabled = videos.length > 0
+    if (activeType.value === "video" && !videos.some((model) => model.id === selectedModel.value)) selectedModel.value = videos[0]?.id || ""
+  } catch (error) {
+    videoCatalog.value = []
+    capabilities.value.video.models = []
+    capabilities.value.video.enabled = false
+    videoModelsFailed.value = true
+    if (activeType.value === "video") selectedModel.value = ""
+    notification.error(`视频模型加载失败：${apiErrorMessage(error, "请稍后重试")}`)
+  } finally {
+    videoModelsLoading.value = false
+  }
+}
+
+function retryCurrentModels() {
+  if (activeType.value === "video") void loadVideoModels()
+  else void loadImageModels()
 }
 
 function revokeRecentPreviewUrls() {
@@ -520,12 +778,27 @@ function recentMeta(work: assetApi.Asset) {
 
 onMounted(async () => {
 	await Promise.all([loadModels(), loadRecentWorks()])
+	await restoreCreationDraft()
+	draftRestored.value = true
 	await restoreSameParameters()
-  if ("requestIdleCallback" in window) heroIdleHandle = window.requestIdleCallback(() => (showHeroBackdrop.value = true))
-  else requestAnimationFrame(() => (showHeroBackdrop.value = true))
+  const revealHero = async () => {
+    showHeroBackdrop.value = true
+    if (await preloadHeroSlide(0)) {
+      void preloadHeroSlide(1)
+      await nextTick()
+      syncHeroMediaPlayback(true)
+      scheduleHeroRotation()
+    }
+  }
+  if ("requestIdleCallback" in window) heroIdleHandle = window.requestIdleCallback(() => void revealHero())
+  else requestAnimationFrame(() => void revealHero())
+  document.addEventListener("visibilitychange", handleHeroVisibility)
 })
 onBeforeUnmount(() => {
+  persistCreationDraft()
   if (heroIdleHandle !== undefined && "cancelIdleCallback" in window) window.cancelIdleCallback(heroIdleHandle)
+	stopHeroRotation()
+	document.removeEventListener("visibilitychange", handleHeroVisibility)
 	pauseRecentRefresh()
 	closeReferencePicker()
 	clearReferencePreviews()
@@ -535,25 +808,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="home-page" :class="{ 'home-page--dark': darkMode }">
-    <section class="creation-stage">
-      <img v-if="showHeroBackdrop" class="creation-stage__backdrop" src="https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=2200&q=82" alt="" loading="lazy" decoding="async" fetchpriority="low" />
-      <div class="creation-stage__toolbar">
-        <button class="round-action" type="button" aria-label="通知">
-          <Bell :size="18" />
-          <span class="round-action__dot" />
-        </button>
-        <button class="round-action" type="button" :aria-label="darkMode ? '切换浅色模式' : '切换深色模式'" @click="darkMode = !darkMode">
-          <Sun v-if="darkMode" :size="19" />
-          <Moon v-else :size="19" />
-        </button>
-        <button class="header-avatar" type="button" aria-label="个人中心" @click="router.push('/profile')"><UserAvatar /></button>
-      </div>
-
+  <div class="home-page">
+    <section class="creation-stage" @mouseenter="setHeroPaused(true)" @mouseleave="setHeroPaused(false)">
+      <template v-if="showHeroBackdrop">
+        <template v-for="(slide, index) in heroSlides" :key="slide.src">
+          <img v-if="slide.type === 'image' && readyHeroIndexes.includes(index)" class="creation-stage__backdrop" :class="{ 'is-active': activeHeroIndex === index }" :src="slide.src" alt="" decoding="async" />
+          <video v-else-if="slide.type === 'video' && readyHeroIndexes.includes(index)" :ref="(element) => setHeroVideoRef(element, index)" class="creation-stage__backdrop" :class="{ 'is-active': activeHeroIndex === index }" :src="slide.src" muted playsinline preload="metadata" aria-hidden="true" @loadeddata="syncHeroMediaPlayback()" @ended="handleHeroVideoEnded(index)" />
+        </template>
+        <div class="creation-stage__pagination" aria-label="背景轮播">
+          <button v-for="(_, index) in heroSlides" :key="index" type="button" :class="{ 'is-active': activeHeroIndex === index }" :aria-label="`切换到轮播内容 ${index + 1}`" :aria-current="activeHeroIndex === index ? 'true' : undefined" @click="selectHeroSlide(index)" />
+        </div>
+      </template>
       <div class="creation-stage__intro">
-        <p>NOVA CREATIVE ENGINE</p>
-        <h1>把灵感变成作品</h1>
-        <span>从一句话开始，组织图片、视频、声音与故事。</span>
+        <p>Hello，{{ authStore.user?.username || "创作者" }}</p>
+        <h1>把 <em>灵感</em>，变成作品</h1>
+        <span class="creation-stage__description">从一句话开始，生成图片与视频作品。</span>
+        <i class="creation-stage__accent" />
       </div>
 
       <div class="composer" aria-label="AI 创作输入区">
@@ -596,7 +866,8 @@ onBeforeUnmount(() => {
             <textarea v-model="prompt" :placeholder="promptPlaceholder" rows="3" maxlength="1000" />
             <div class="composer__options">
               <div class="composer__selects">
-                <label class="compact-select"><select v-model="selectedModel" aria-label="模型" :disabled="modelsLoading || !currentCapability?.models.length"><option v-if="modelsLoading" value="">加载模型</option><option v-else-if="!currentCapability?.models.length" value="">暂无模型</option><option v-for="option in currentCapability?.models || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
+				<label class="compact-select"><select v-model="selectedModel" aria-label="模型" :disabled="modelsLoading || !currentCapability?.models.length"><option v-if="modelsLoading" value="">加载模型</option><option v-else-if="currentModelsFailed" value="">加载失败</option><option v-else-if="!currentCapability?.models.length" value="">暂无模型</option><option v-for="option in currentCapability?.models || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
+				<button v-if="currentModelsFailed" class="model-retry" type="button" :disabled="modelsLoading" title="重新加载模型" aria-label="重新加载模型" @click="retryCurrentModels"><RefreshCcw :class="{ spin: modelsLoading }" :size="14" /></button>
 				<label v-if="activeType === 'video'" class="compact-select compact-select--mode"><select :value="videoMode" aria-label="视频生成模式" @change="changeVideoMode"><option v-for="mode in availableVideoModes" :key="mode.value" :value="mode.value">{{ mode.label }}</option></select><ChevronDown :size="14" /></label>
                 <label class="compact-select compact-select--small"><select v-model="selectedSize" aria-label="画面比例" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.sizes || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
 				<label class="compact-select compact-select--small"><select v-model="selectedQuality" aria-label="分辨率" :disabled="!currentCapability?.enabled"><option v-for="option in currentCapability?.qualities || []" :key="option.value" :value="option.value">{{ option.label }}</option></select><ChevronDown :size="14" /></label>
@@ -628,7 +899,7 @@ onBeforeUnmount(() => {
             <button type="button" @click="router.push('/assets')">查看全部 <ArrowRight :size="15" /></button>
           </div>
           <div v-if="recentLoading" class="media-grid media-grid--recent" aria-label="正在加载最近创作">
-            <span v-for="index in 8" :key="index" class="media-tile media-tile--loading" />
+            <span v-for="index in recentWorkLimit" :key="index" class="media-tile media-tile--loading" />
           </div>
           <div v-else-if="recentWorks.length" class="media-grid media-grid--recent">
             <button v-for="work in recentWorks" :key="work.id" type="button" class="media-tile" :disabled="work.status !== 'ready' || !recentPreviewUrls[work.id]" @click="openRecent(work)">
@@ -643,7 +914,6 @@ onBeforeUnmount(() => {
           </div>
           <div v-else class="recent-empty">完成第一次图片生成后，作品会出现在这里</div>
         </section>
-
       </div>
     </div>
 
@@ -652,7 +922,11 @@ onBeforeUnmount(() => {
 	<div v-if="referencePickerOpen" class="reference-picker" role="dialog" aria-modal="true" aria-label="选择参考素材" @click.self="closeReferencePicker">
 	  <div class="reference-picker__panel">
 		<header><div><strong>选择参考素材</strong><span>{{ referenceHint }}</span></div><button type="button" title="关闭" aria-label="关闭素材选择" @click="closeReferencePicker"><X :size="18" /></button></header>
-		<div class="reference-picker__toolbar"><button type="button" @click="chooseReference"><Paperclip :size="15" />上传新文件</button><span>已选 {{ references.length }}/{{ referenceLimit }}</span></div>
+		<div class="reference-picker__toolbar">
+		  <label class="reference-picker__search"><Search :size="15" /><input v-model="referencePickerSearch" type="search" placeholder="搜索素材名称" @input="searchReferencePicker()" /></label>
+		  <button type="button" @click="chooseReference"><Paperclip :size="15" />上传新文件</button>
+		  <span>已选 {{ references.length }}/{{ referenceLimit }}</span>
+		</div>
 		<div v-if="referencePickerLoading" class="reference-picker__state"><LoaderCircle class="spin" :size="22" />正在加载素材</div>
 		<div v-else-if="referencePickerAssets.length" class="reference-picker__grid">
 		  <button v-for="asset in referencePickerAssets" :key="asset.id" type="button" :title="asset.title" @click="selectExistingReference(asset)">
@@ -661,7 +935,11 @@ onBeforeUnmount(() => {
 			<small>{{ asset.title }}</small>
 		  </button>
 		</div>
-		<div v-else class="reference-picker__state"><FolderOpen :size="24" />暂无可用素材</div>
+		<div v-else class="reference-picker__state"><FolderOpen :size="24" />{{ referencePickerSearch.trim() ? "没有找到可用素材" : "暂无可用素材" }}</div>
+		<footer class="reference-picker__footer">
+		  <button v-if="referencePickerHasMore" type="button" :disabled="referencePickerLoadingMore" @click="loadReferencePickerAssets({ append: true })"><LoaderCircle v-if="referencePickerLoadingMore" class="spin" :size="15" />{{ referencePickerLoadingMore ? "加载中" : "加载更多" }}</button>
+		  <button class="reference-picker__done" type="button" @click="closeReferencePicker">完成</button>
+		</footer>
 	  </div>
 	</div>
   </div>

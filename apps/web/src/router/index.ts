@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router"
 
 import { useAuthStore } from "@/stores/auth"
+import { pinia } from "@/stores"
 
 const workspaceRoutes: Array<RouteRecordRaw> = [
   { path: "", name: "home", component: () => import("@/views/HomeView.vue"), meta: { title: "创作" } },
@@ -24,7 +25,7 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  const auth = useAuthStore()
+  const auth = useAuthStore(pinia)
   await auth.ensureSession()
 
   if (to.meta.requiresAuth && !auth.isAuthenticated) {

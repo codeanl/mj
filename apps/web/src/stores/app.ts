@@ -3,7 +3,7 @@ import { defineStore } from "pinia"
 export const useAppStore = defineStore("app", {
   state: () => ({
     mobileNavigationOpen: false,
-    notifications: 2,
+    darkMode: localStorage.getItem("nova.color-scheme") === "dark",
   }),
   actions: {
     toggleMobileNavigation() {
@@ -12,6 +12,9 @@ export const useAppStore = defineStore("app", {
     closeMobileNavigation() {
       this.mobileNavigationOpen = false
     },
+    toggleDarkMode() {
+      this.darkMode = !this.darkMode
+      localStorage.setItem("nova.color-scheme", this.darkMode ? "dark" : "light")
+    },
   },
 })
-

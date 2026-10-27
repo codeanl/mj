@@ -9,6 +9,7 @@ import (
 	_ "image/png"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 
@@ -33,7 +34,7 @@ func (handlers authHandlers) Register(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{Code: 40001, Msg: "请求参数格式不正确"})
 		return
 	}
-	result, err := handlers.service.Register(r.Context(), input)
+	result, err := handlers.service.Register(r.Context(), input, requestClientInfo(r))
 	if err != nil {
 		handlers.writeAuthError(w, err)
 		return
@@ -47,7 +48,7 @@ func (handlers authHandlers) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{Code: 40001, Msg: "请求参数格式不正确"})
 		return
 	}
-	result, err := handlers.service.Login(r.Context(), input)
+	result, err := handlers.service.Login(r.Context(), input, requestClientInfo(r))
 	if err != nil {
 		handlers.writeAuthError(w, err)
 		return
@@ -62,6 +63,99 @@ func (handlers authHandlers) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: user, Msg: "获取成功"})
+}
+
+func (handlers authHandlers) Logout(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	if err := handlers.service.Logout(r.Context(), user); err != nil && !errors.Is(err, auth.ErrInvalidSession) {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: nil, Msg: "已退出登录"})
+}
+
+func (handlers authHandlers) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUser(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40101, Msg: "请先登录"})
+		return
+	}
+	var input auth.ChangePasswordInput
+	if decodeJSON(r, &input) != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "密码参数不正确"})
+		return
+	}
+	if err := handlers.service.ChangePassword(r.Context(), user, input); err != nil {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: nil, Msg: "密码已更新，其他设备已退出"})
+}
+
+func (handlers authHandlers) Sessions(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	sessions, err := handlers.service.ListSessions(r.Context(), user)
+	if err != nil {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"items": sessions}, Msg: "获取成功"})
+}
+
+func (handlers authHandlers) RevokeSession(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	if err := handlers.service.RevokeSession(r.Context(), user, r.PathValue("sessionId")); err != nil {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: nil, Msg: "设备已退出"})
+}
+
+func (handlers authHandlers) RevokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	if err := handlers.service.RevokeOtherSessions(r.Context(), user); err != nil {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: nil, Msg: "其他设备已全部退出"})
+}
+
+func (handlers authHandlers) DeletionRequest(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	request, err := handlers.service.GetAccountDeletionRequest(r.Context(), user)
+	if err != nil {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: request, Msg: "获取成功"})
+}
+
+func (handlers authHandlers) RequestDeletion(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	var input auth.RequestAccountDeletionInput
+	if decodeJSON(r, &input) != nil {
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "请输入当前密码"})
+		return
+	}
+	request, err := handlers.service.RequestAccountDeletion(r.Context(), user, input)
+	if err != nil {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: request, Msg: "注销申请已提交"})
+}
+
+func (handlers authHandlers) CancelDeletion(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	if err := handlers.service.CancelAccountDeletion(r.Context(), user); err != nil {
+		handlers.writeSecurityError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: nil, Msg: "注销申请已撤销"})
 }
 
 func (handlers authHandlers) UpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +272,26 @@ func (handlers authHandlers) writeProfileError(w http.ResponseWriter, err error)
 	writeJSON(w, http.StatusInternalServerError, response{Code: 50002, Msg: "个人资料服务暂时不可用"})
 }
 
+func (handlers authHandlers) writeSecurityError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		writeJSON(w, http.StatusUnauthorized, response{Code: 40102, Msg: "当前密码不正确"})
+	case errors.Is(err, auth.ErrInvalidInput):
+		writeJSON(w, http.StatusBadRequest, response{Code: 40004, Msg: "新密码需要 8-72 位"})
+	case errors.Is(err, auth.ErrCurrentSession):
+		writeJSON(w, http.StatusBadRequest, response{Code: 40005, Msg: "不能在此处注销当前设备"})
+	case errors.Is(err, auth.ErrInvalidSession):
+		writeJSON(w, http.StatusNotFound, response{Code: 40402, Msg: "登录设备不存在或已退出"})
+	case errors.Is(err, auth.ErrDeletionRequestMissing):
+		writeJSON(w, http.StatusNotFound, response{Code: 40403, Msg: "没有待处理的注销申请"})
+	case errors.Is(err, auth.ErrAdminDeletionForbidden):
+		writeJSON(w, http.StatusForbidden, response{Code: 40304, Msg: "管理员账号不能提交注销申请"})
+	default:
+		handlers.logger.Error("account security request failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, response{Code: 50003, Msg: "账号安全服务暂时不可用"})
+	}
+}
+
 func (handlers authHandlers) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rawToken, ok := bearerToken(r.Header.Get("Authorization"))
@@ -239,6 +353,14 @@ func bearerToken(header string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(token), true
+}
+
+func requestClientInfo(r *http.Request) auth.ClientInfo {
+	ipAddress := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(ipAddress); err == nil {
+		ipAddress = host
+	}
+	return auth.ClientInfo{UserAgent: r.UserAgent(), IPAddress: ipAddress}
 }
 
 type currentUserContextKey struct{}

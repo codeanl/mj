@@ -70,7 +70,7 @@ func TestNormalizeReferenceAssetIDsAllowsThreeUniqueImages(t *testing.T) {
 }
 
 func TestNormalizeVideoReferencesValidatesModesAndLimits(t *testing.T) {
-	if references, ok := normalizeVideoReferences(VideoModeText, nil); !ok || len(references) != 0 {
+	if references, ok := normalizeVideoReferences(VideoModeText, nil); !ok || references == nil || len(references) != 0 {
 		t.Fatalf("text mode should accept no references: %#v %v", references, ok)
 	}
 	first, last := uuid.NewString(), uuid.NewString()
@@ -93,5 +93,36 @@ func TestNormalizeVideoReferencesValidatesModesAndLimits(t *testing.T) {
 	}
 	if _, ok := normalizeVideoReferences(VideoModeReference, []VideoReference{{AssetID: uuid.NewString(), Role: VideoRoleAudio}}); ok {
 		t.Fatal("audio-only reference must be rejected")
+	}
+	imageID, videoID, audioID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	validSpecialModes := []struct {
+		mode       string
+		references []VideoReference
+	}{
+		{mode: "extend", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}}},
+		{mode: "edit", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}}},
+		{mode: "lip_sync", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}, {AssetID: audioID, Role: VideoRoleAudio}}},
+		{mode: "motion_transfer", references: []VideoReference{{AssetID: imageID, Role: VideoRoleImage}, {AssetID: videoID, Role: VideoRoleVideo}}},
+	}
+	for _, test := range validSpecialModes {
+		if normalized, ok := normalizeVideoReferences(test.mode, test.references); !ok || len(normalized) != len(test.references) {
+			t.Fatalf("%s references should be valid: %#v %v", test.mode, normalized, ok)
+		}
+	}
+	invalidSpecialModes := []struct {
+		mode       string
+		references []VideoReference
+	}{
+		{mode: "extend", references: []VideoReference{{AssetID: imageID, Role: VideoRoleImage}}},
+		{mode: "lip_sync", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}}},
+		{mode: "motion_transfer", references: []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}}},
+	}
+	for _, test := range invalidSpecialModes {
+		if _, ok := normalizeVideoReferences(test.mode, test.references); ok {
+			t.Fatalf("%s should reject incomplete references: %#v", test.mode, test.references)
+		}
+	}
+	if _, ok := normalizeVideoReferences("unsupported_mode", []VideoReference{{AssetID: videoID, Role: VideoRoleVideo}}); ok {
+		t.Fatal("unknown video mode must be rejected")
 	}
 }

@@ -3,12 +3,62 @@ package assets
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestAssetManagementRoundTrip(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	userID, otherUserID := uuid.NewString(), uuid.NewString()
+	assetIDs := []string{uuid.NewString(), uuid.NewString()}
+	otherAssetID := uuid.NewString()
+	if _, err = pool.Exec(ctx, `INSERT INTO users(id,email,username,password_hash)VALUES($1,$2,'asset-owner','x'),($3,$4,'other-owner','x')`, userID, "asset-owner-"+uuid.NewString()+"@example.com", otherUserID, "other-owner-"+uuid.NewString()+"@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::uuid[])`, []string{userID, otherUserID})
+	}()
+	if _, err = pool.Exec(ctx, `
+		INSERT INTO media_assets(id,user_id,kind,source,status,title,original_name,storage_key,mime_type,size_bytes,width,height) VALUES
+		($1,$4,'image','uploaded','ready','第一张','one.png','one.png','image/png',100,10,10),
+		($2,$4,'video','generated','ready','第二段','two.mp4','two.mp4','video/mp4',250,0,0),
+		($3,$5,'image','uploaded','ready','他人素材','other.png','other.png','image/png',900,10,10)
+	`, assetIDs[0], assetIDs[1], otherAssetID, userID, otherUserID); err != nil {
+		t.Fatal(err)
+	}
+	repository := NewPostgresRepository(pool)
+	stats, err := repository.Stats(ctx, userID)
+	if err != nil || stats.TotalCount != 2 || stats.TotalBytes != 350 || stats.ImageCount != 1 || stats.VideoCount != 1 || stats.GeneratedCount != 1 || stats.UploadedCount != 1 {
+		t.Fatalf("unexpected asset stats: %#v err=%v", stats, err)
+	}
+	renamed, err := repository.Rename(ctx, userID, assetIDs[0], "新标题")
+	if err != nil || renamed.Title != "新标题" {
+		t.Fatalf("rename asset: %#v err=%v", renamed, err)
+	}
+	if _, err := repository.Rename(ctx, userID, otherAssetID, "不可修改"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("must not rename another user's asset: %v", err)
+	}
+	deleted, err := repository.DeleteMany(ctx, userID, append(assetIDs, otherAssetID))
+	if err != nil || len(deleted) != 2 {
+		t.Fatalf("delete owned assets: %#v err=%v", deleted, err)
+	}
+	if _, err := repository.Find(ctx, otherUserID, otherAssetID); err != nil {
+		t.Fatalf("other user's asset must remain: %v", err)
+	}
+}
 
 func TestListIncludesGenerationMetadata(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
@@ -62,5 +112,12 @@ func TestListIncludesGenerationMetadata(t *testing.T) {
 	}
 	if len(metadata.References) != 2 || metadata.References[0].AssetID != referenceIDs[0] || metadata.References[0].Role != "reference_image" || metadata.References[0].Title != "参考图 1" || metadata.References[0].URL == "" {
 		t.Fatalf("unexpected references: %#v", metadata.References)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE generation_tasks SET parameters=jsonb_set(jsonb_set(parameters,'{videoReferences}','null'::jsonb),'{referenceAssetIds}','null'::jsonb) WHERE id=$1`, taskID); err != nil {
+		t.Fatal(err)
+	}
+	page, err = NewPostgresRepository(pool).List(ctx, userID, "", SourceGenerated, StatusReady, "", 1, 8)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Generation == nil || page.Items[0].Generation.ReferenceCount != 0 || len(page.Items[0].Generation.References) != 0 {
+		t.Fatalf("list with null references: %#v err=%v", page, err)
 	}
 }

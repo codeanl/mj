@@ -14,6 +14,7 @@ type User struct {
 	Status           string    `json:"status"`
 	PointsBalance    float64   `json:"pointsBalance"`
 	CreatedAt        time.Time `json:"createdAt"`
+	SessionID        string    `json:"-"`
 	avatarStorageKey string
 	avatarMimeType   string
 	avatarUpdatedAt  *time.Time
@@ -37,6 +38,37 @@ type LoginInput struct {
 
 type ProfileInput struct {
 	Username string `json:"username"`
+}
+
+type ClientInfo struct {
+	UserAgent string
+	IPAddress string
+}
+
+type Session struct {
+	ID         string    `json:"id"`
+	UserAgent  string    `json:"userAgent"`
+	IPAddress  string    `json:"ipAddress"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+	Current    bool      `json:"current"`
+}
+
+type ChangePasswordInput struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+type AccountDeletionRequest struct {
+	ID          string     `json:"id"`
+	Status      string     `json:"status"`
+	RequestedAt time.Time  `json:"requestedAt"`
+	CancelledAt *time.Time `json:"cancelledAt,omitempty"`
+}
+
+type RequestAccountDeletionInput struct {
+	CurrentPassword string `json:"currentPassword"`
 }
 
 type Avatar struct {

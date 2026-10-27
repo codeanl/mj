@@ -1,22 +1,29 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
 import { useDebounceFn, useIntervalFn } from "@vueuse/core"
 import {
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   Ban,
+  Check,
   CircleAlert,
   Download,
+  HardDrive,
   Image,
   Images,
+  ListChecks,
   LoaderCircle,
   Music,
+  Pencil,
   Play,
   Plus,
 	RotateCcw,
 	RefreshCcw,
   Search,
+  Sparkles,
+  Trash2,
   Upload,
   Video,
 } from "@lucide/vue"
@@ -27,6 +34,7 @@ import { apiErrorMessage } from "@/services/http"
 import { notification } from "@/services/notifications"
 import { cancelGenerationTask, checkGenerationTask, retryGenerationTask } from "@/services/generation"
 import { useAuthStore } from "@/stores/auth"
+import { useAssetDownload } from "@/hooks/use-asset-download"
 
 type AssetFilter = "all" | assetApi.AssetType
 
@@ -40,13 +48,23 @@ const filters: Array<{ value: AssetFilter; label: string; icon: typeof Images }>
 const assets = ref<assetApi.Asset[]>([])
 const total = ref(0)
 const activeFilter = ref<AssetFilter>("all")
+const sourceFilter = ref<"" | assetApi.AssetSource>("")
+const statusFilter = ref<"" | assetApi.AssetStatus>("")
 const searchKeyword = ref("")
 const currentPage = ref(1)
-const pageSize = ref(12)
+const pageSize = 12
 const loading = ref(false)
 const refreshing = ref(false)
 const uploading = ref(false)
 const retryingId = ref("")
+const managing = ref(false)
+const selectedIds = ref<string[]>([])
+const renameTarget = ref<assetApi.Asset | null>(null)
+const renameTitle = ref("")
+const savingRename = ref(false)
+const deleteConfirmationOpen = ref(false)
+const deleting = ref(false)
+const stats = ref<assetApi.AssetStats | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const previewUrls = ref<Record<string, string>>({})
 const previewSignatures = ref<Record<string, string>>({})
@@ -54,12 +72,30 @@ const selectedAsset = ref<assetApi.Asset | null>(null)
 const selectedAssetUrl = ref("")
 let selectedAssetObjectUrl = ""
 const authStore = useAuthStore()
+const { downloadAsset: downloadAssetFile, downloadAssets: downloadAssetFiles } = useAssetDownload()
 const router = useRouter()
 const sameParametersStorageKey = "nova.same-generation-parameters"
 let loadSequence = 0
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const paginationItems = computed(() => {
+  const lastPage = totalPages.value
+  if (lastPage <= 7) return Array.from({ length: lastPage }, (_, index) => ({ key: `page-${index + 1}`, page: index + 1, label: String(index + 1) }))
+  let start = Math.max(2, currentPage.value - 1)
+  let end = Math.min(lastPage - 1, currentPage.value + 1)
+  if (currentPage.value <= 3) end = 4
+  if (currentPage.value >= lastPage - 2) start = lastPage - 3
+  const items: Array<{ key: string; page?: number; label: string }> = [{ key: "page-1", page: 1, label: "1" }]
+  if (start > 2) items.push({ key: "ellipsis-start", label: "..." })
+  for (let page = start; page <= end; page++) items.push({ key: `page-${page}`, page, label: String(page) })
+  if (end < lastPage - 1) items.push({ key: "ellipsis-end", label: "..." })
+  items.push({ key: `page-${lastPage}`, page: lastPage, label: String(lastPage) })
+  return items
+})
 const hasGeneratingAssets = computed(() => assets.value.some((asset) => asset.status === "generating"))
+const selectedAssets = computed(() => assets.value.filter((asset) => selectedIds.value.includes(asset.id)))
+const allCurrentSelected = computed(() => assets.value.length > 0 && assets.value.every((asset) => selectedIds.value.includes(asset.id)))
+const selectedReady = computed(() => selectedAssets.value.length > 0 && selectedAssets.value.every((asset) => asset.status === "ready"))
 const refreshInterval = Number(import.meta.env.VITE_GENERATION_REFRESH_INTERVAL_MS || 3000)
 
 const { pause: pauseRefresh, resume: resumeRefresh } = useIntervalFn(
@@ -70,7 +106,10 @@ const { pause: pauseRefresh, resume: resumeRefresh } = useIntervalFn(
   { immediate: false },
 )
 
-watch([activeFilter, currentPage, pageSize], () => void loadAssets(), { immediate: true })
+watch([activeFilter, sourceFilter, statusFilter, currentPage], () => {
+  selectedIds.value = []
+  void loadAssets()
+}, { immediate: true })
 
 const searchAssets = useDebounceFn(() => {
   if (currentPage.value !== 1) currentPage.value = 1
@@ -84,6 +123,7 @@ onBeforeUnmount(() => {
   closeAsset()
   revokePreviewUrls()
 })
+onMounted(() => void loadStats())
 
 async function loadAssets(options: { silent?: boolean } = {}) {
   const sequence = ++loadSequence
@@ -92,8 +132,10 @@ async function loadAssets(options: { silent?: boolean } = {}) {
   try {
     const result = await assetApi.listAssets({
       page: currentPage.value,
-      pageSize: pageSize.value,
+      pageSize,
       type: activeFilter.value === "all" ? undefined : activeFilter.value,
+      source: sourceFilter.value || undefined,
+      status: statusFilter.value || undefined,
       search: searchKeyword.value.trim() || undefined,
     })
     if (sequence !== loadSequence) return
@@ -182,6 +224,7 @@ async function handleFileSelection(event: Event) {
     searchKeyword.value = ""
     if (currentPage.value !== 1) currentPage.value = 1
     else await loadAssets()
+    await loadStats()
   } catch (error) {
     notification.error(apiErrorMessage(error, "素材上传失败"))
   } finally {
@@ -261,16 +304,80 @@ async function cancelAsset(asset: assetApi.Asset) {
 }
 
 async function downloadAsset(asset: assetApi.Asset) {
+  await downloadAssetFile(asset)
+}
+
+async function loadStats() {
   try {
-    const blob = await assetApi.getAssetContent(asset.downloadUrl)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = asset.title
-    link.click()
-    URL.revokeObjectURL(url)
+    stats.value = await assetApi.getAssetStats()
   } catch (error) {
-    notification.error(apiErrorMessage(error, "素材下载失败"))
+    notification.error(apiErrorMessage(error, "素材统计加载失败"))
+  }
+}
+
+function toggleManaging() {
+  managing.value = !managing.value
+  selectedIds.value = []
+}
+
+function toggleSelected(assetId: string) {
+  selectedIds.value = selectedIds.value.includes(assetId) ? selectedIds.value.filter((id) => id !== assetId) : [...selectedIds.value, assetId]
+}
+
+function toggleSelectCurrent() {
+  selectedIds.value = allCurrentSelected.value ? [] : assets.value.map((asset) => asset.id)
+}
+
+function openRename(asset: assetApi.Asset) {
+  closeAsset()
+  renameTarget.value = asset
+  renameTitle.value = asset.title
+}
+
+async function saveRename() {
+  if (!renameTarget.value || savingRename.value) return
+  const title = renameTitle.value.trim()
+  if (!title || title.length > 120) {
+    notification.warning("素材名称需要 1-120 个字符")
+    return
+  }
+  savingRename.value = true
+  try {
+    const updated = await assetApi.renameAsset(renameTarget.value.id, title)
+    assets.value = assets.value.map((asset) => asset.id === updated.id ? { ...asset, title: updated.title } : asset)
+    renameTarget.value = null
+    notification.success("素材名称已更新")
+  } catch (error) {
+    notification.error(apiErrorMessage(error, "素材重命名失败"))
+  } finally {
+    savingRename.value = false
+  }
+}
+
+async function downloadSelected() {
+  if (!selectedReady.value) return
+  await downloadAssetFiles(selectedAssets.value)
+}
+
+function requestDelete(asset?: assetApi.Asset) {
+  if (asset) selectedIds.value = [asset.id]
+  closeAsset()
+  if (selectedIds.value.length) deleteConfirmationOpen.value = true
+}
+
+async function confirmDelete() {
+  if (!selectedIds.value.length || deleting.value) return
+  deleting.value = true
+  try {
+    const result = await assetApi.deleteAssets(selectedIds.value)
+    deleteConfirmationOpen.value = false
+    selectedIds.value = []
+    await Promise.all([loadAssets(), loadStats()])
+    notification.success(`已删除 ${result.deleted} 项素材`)
+  } catch (error) {
+    notification.error(apiErrorMessage(error, "素材删除失败"))
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -314,16 +421,15 @@ function statusLabel(status: assetApi.AssetStatus) {
 <template>
   <section class="assets-page">
     <header class="assets-header">
-      <div>
-        <p>NOVA ASSETS</p>
-        <h1>我的素材</h1>
-        <span>统一管理创作过程中生成和上传的图片、视频和音频。</span>
+      <div><h1>我的素材</h1><span v-if="stats" class="assets-storage"><HardDrive :size="14" />{{ formatBytes(stats.totalBytes) }} · {{ stats.totalCount }} 项</span></div>
+      <div class="assets-header__actions">
+        <button class="assets-manage" type="button" :class="{ 'is-active': managing }" @click="toggleManaging"><ListChecks :size="17" /><span>{{ managing ? "完成管理" : "批量管理" }}</span></button>
+        <button class="assets-upload" type="button" :disabled="uploading" @click="chooseAsset">
+          <LoaderCircle v-if="uploading" class="spin" :size="17" />
+          <Plus v-else :size="17" />
+          <span>{{ uploading ? "上传中" : "上传素材" }}</span>
+        </button>
       </div>
-      <button class="assets-upload" type="button" :disabled="uploading" @click="chooseAsset">
-        <LoaderCircle v-if="uploading" class="spin" :size="17" />
-        <Plus v-else :size="17" />
-        <span>{{ uploading ? "上传中" : "上传素材" }}</span>
-      </button>
       <input ref="fileInput" class="asset-file-input" type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,audio/ogg,audio/flac" @change="handleFileSelection" />
     </header>
 
@@ -339,6 +445,19 @@ function statusLabel(status: assetApi.AssetStatus) {
           <span>{{ filter.label }}</span>
         </button>
       </div>
+
+      <div class="asset-select-filters">
+        <select v-model="sourceFilter" aria-label="素材来源"><option value="">全部来源</option><option value="generated">AI 生成</option><option value="uploaded">用户上传</option></select>
+        <select v-model="statusFilter" aria-label="素材状态"><option value="">全部状态</option><option value="ready">已完成</option><option value="generating">生成中</option><option value="needs_review">等待确认</option><option value="failed">生成失败</option></select>
+      </div>
+    </div>
+
+    <div v-if="managing" class="assets-batchbar">
+      <button type="button" @click="toggleSelectCurrent"><Check :size="15" />{{ allCurrentSelected ? "取消全选" : "全选本页" }}</button>
+      <span>已选 {{ selectedIds.length }} 项</span>
+      <button type="button" :disabled="selectedIds.length !== 1" @click="selectedAssets[0] && openRename(selectedAssets[0])"><Pencil :size="15" />重命名</button>
+      <button type="button" :disabled="!selectedReady" @click="downloadSelected"><Download :size="15" />打包下载</button>
+      <button class="is-danger" type="button" :disabled="!selectedIds.length" @click="requestDelete()"><Trash2 :size="15" />删除</button>
     </div>
 
     <div v-if="loading" class="assets-grid" aria-label="正在加载素材">
@@ -346,16 +465,17 @@ function statusLabel(status: assetApi.AssetStatus) {
     </div>
 
     <div v-else-if="assets.length" class="assets-grid">
-      <article v-for="asset in assets" :key="asset.id" class="asset-card" :class="`asset-card--${asset.status}`">
-        <button class="asset-card__preview" type="button" :disabled="asset.status !== 'ready'" @click="openAsset(asset)">
+      <article v-for="asset in assets" :key="asset.id" class="asset-card" :class="[`asset-card--${asset.status}`, { 'is-selected': selectedIds.includes(asset.id) }]">
+        <button class="asset-card__preview" type="button" :disabled="!managing && asset.status !== 'ready'" :aria-pressed="managing ? selectedIds.includes(asset.id) : undefined" @click="managing ? toggleSelected(asset.id) : openAsset(asset)">
 		  <img v-if="asset.status === 'ready' && previewUrls[asset.id] && (asset.type === 'image' || asset.posterUrl)" :src="previewUrls[asset.id]" :alt="asset.title" />
 		  <video v-else-if="asset.status === 'ready' && previewUrls[asset.id] && asset.type === 'video'" :src="previewUrls[asset.id]" muted preload="metadata" />
 		  <span v-else-if="asset.status === 'ready' && previewUrls[asset.id]" class="asset-card__audio"><Music :size="30" /><strong>{{ asset.title }}</strong></span>
-		  <span v-else-if="asset.status === 'generating'" class="asset-card__generation-state"><LoaderCircle class="spin" :size="25" /><strong>图片生成中</strong><small>任务完成后自动更新</small></span>
+		  <span v-else-if="asset.status === 'generating'" class="asset-card__generation-state"><LoaderCircle class="spin" :size="25" /><strong>{{ asset.type === "video" ? "视频生成中" : "图片生成中" }}</strong><small>任务完成后自动更新</small></span>
 		  <span v-else-if="asset.status === 'needs_review'" class="asset-card__generation-state asset-card__generation-state--failed"><CircleAlert :size="25" /><strong>等待确认</strong><small>{{ asset.errorMessage || "请检查上游状态" }}</small></span>
           <span v-else-if="asset.status === 'failed'" class="asset-card__generation-state asset-card__generation-state--failed" :title="asset.errorMessage"><CircleAlert :size="25" /><strong>生成失败</strong><small>{{ asset.errorMessage || "请稍后重试" }}</small></span>
 		  <span v-else class="asset-card__media-loading"><Image v-if="asset.type === 'image'" :size="24" /><Video v-else-if="asset.type === 'video'" :size="24" /><Music v-else :size="24" /></span>
 		  <span class="asset-card__type"><Image v-if="asset.type === 'image'" :size="13" /><Video v-else-if="asset.type === 'video'" :size="13" /><Music v-else :size="13" />{{ asset.type === "image" ? "图片" : asset.type === "video" ? "视频" : "音频" }}</span>
+		  <span v-if="managing" class="asset-card__selection"><Check v-if="selectedIds.includes(asset.id)" :size="14" /></span>
           <span v-if="asset.type === 'video' && asset.status === 'ready'" class="asset-card__play"><Play :size="18" fill="currentColor" /></span>
           <span v-if="formatDuration(asset.durationSeconds)" class="asset-card__duration">{{ formatDuration(asset.durationSeconds) }}</span>
         </button>
@@ -373,20 +493,33 @@ function statusLabel(status: assetApi.AssetStatus) {
       <span><Upload :size="23" /></span>
       <strong>没有找到素材</strong>
       <p>调整搜索条件，或上传第一份创作素材。</p>
+      <button class="assets-empty__create" type="button" @click="router.push('/')">
+        <Sparkles :size="16" />
+        开始创作
+        <ArrowRight :size="15" />
+      </button>
     </div>
 
     <footer class="assets-pagination">
       <span>共 {{ total }} 项</span>
       <div class="assets-pagination__controls">
         <button type="button" aria-label="上一页" :disabled="currentPage <= 1" @click="setPage(currentPage - 1)"><ChevronLeft :size="17" /></button>
-        <button v-for="page in totalPages" :key="page" type="button" :class="{ 'is-current': currentPage === page }" :aria-label="`第 ${page} 页`" @click="setPage(page)">{{ page }}</button>
+        <template v-for="item in paginationItems" :key="item.key">
+          <button v-if="item.page" type="button" :class="{ 'is-current': currentPage === item.page }" :aria-label="`第 ${item.page} 页`" @click="setPage(item.page)">{{ item.label }}</button>
+          <span v-else class="assets-pagination__ellipsis" aria-hidden="true">{{ item.label }}</span>
+        </template>
         <button type="button" aria-label="下一页" :disabled="currentPage >= totalPages" @click="setPage(currentPage + 1)"><ChevronRight :size="17" /></button>
       </div>
-      <label class="assets-page-size">
-        <select v-model="pageSize" aria-label="每页数量"><option :value="8">8 条/页</option><option :value="12">12 条/页</option></select>
-      </label>
     </footer>
 
-    <AssetPreviewDialog v-if="selectedAsset && selectedAssetUrl" :asset="selectedAsset" :media-url="selectedAssetUrl" @close="closeAsset" @recreate="useSameParameters" />
+    <AssetPreviewDialog v-if="selectedAsset && selectedAssetUrl" :asset="selectedAsset" :media-url="selectedAssetUrl" @close="closeAsset" @recreate="useSameParameters" @rename="openRename" @delete="requestDelete" />
+
+    <div v-if="renameTarget" class="asset-manage-dialog" role="dialog" aria-modal="true" aria-label="重命名素材" @click.self="renameTarget = null">
+      <form @submit.prevent="saveRename"><h2>重命名素材</h2><label><span>素材名称</span><input v-model="renameTitle" maxlength="120" autofocus /></label><div><button type="button" @click="renameTarget = null">取消</button><button class="is-primary" type="submit" :disabled="savingRename"><LoaderCircle v-if="savingRename" class="spin" :size="15" />保存</button></div></form>
+    </div>
+
+    <div v-if="deleteConfirmationOpen" class="asset-manage-dialog" role="dialog" aria-modal="true" aria-label="删除素材" @click.self="deleteConfirmationOpen = false">
+      <section><h2>确认删除 {{ selectedIds.length }} 项素材</h2><p>素材文件、生成记录和关联任务将一并删除，此操作无法撤销。</p><div><button type="button" @click="deleteConfirmationOpen = false">取消</button><button class="is-danger" type="button" :disabled="deleting" @click="confirmDelete"><LoaderCircle v-if="deleting" class="spin" :size="15" />确认删除</button></div></section>
+    </div>
   </section>
 </template>

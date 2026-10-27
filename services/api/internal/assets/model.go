@@ -81,6 +81,21 @@ type Page struct {
 	PageSize int     `json:"pageSize"`
 }
 
+type Stats struct {
+	TotalCount     int64 `json:"totalCount"`
+	TotalBytes     int64 `json:"totalBytes"`
+	ImageCount     int64 `json:"imageCount"`
+	VideoCount     int64 `json:"videoCount"`
+	AudioCount     int64 `json:"audioCount"`
+	GeneratedCount int64 `json:"generatedCount"`
+	UploadedCount  int64 `json:"uploadedCount"`
+}
+
+type DeletedAsset struct {
+	ID         string
+	StorageKey string
+}
+
 type CreateInput struct {
 	ID           string
 	UserID       string

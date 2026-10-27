@@ -1,0 +1,60 @@
+{
+  "name": "@nova/desktop",
+  "version": "0.1.0",
+  "description": "Nova Studio AI 创作平台 Windows 客户端",
+  "author": "Nova Studio",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "dev": "node scripts/desktop.mjs dev",
+    "icon:generate": "node scripts/create-icon.mjs",
+    "build": "node --check main.mjs && node --check scripts/desktop.mjs && node --check scripts/create-icon.mjs",
+    "typecheck": "node --check main.mjs && node --check scripts/desktop.mjs && node --check scripts/create-icon.mjs",
+    "package": "node scripts/desktop.mjs package"
+  },
+  "build": {
+    "appId": "com.novastudio.creator",
+    "productName": "Nova Studio",
+    "asar": true,
+    "directories": {
+      "output": "../../dist/desktop"
+    },
+    "files": [
+      "main.mjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": ".build/desktop.config.json",
+        "to": "desktop.config.json"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true
+    }
+  },
+  "dependencies": {
+    "http-proxy": "^1.18.1",
+    "sirv": "^3.0.2"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "sharp": "^0.35.5"
+  }
+}

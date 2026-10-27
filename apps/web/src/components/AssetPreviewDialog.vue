@@ -1,21 +1,22 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue"
-import { Download, Image, LoaderCircle, Music, Video, X } from "@lucide/vue"
+import { Download, Image, LoaderCircle, Music, Pencil, Trash2, Video, X } from "@lucide/vue"
 
 import * as assetApi from "@/services/assets"
-import { apiErrorMessage } from "@/services/http"
-import { notification } from "@/services/notifications"
+import { useAssetDownload } from "@/hooks/use-asset-download"
 
 const props = defineProps<{ asset: assetApi.Asset; mediaUrl: string }>()
-const emit = defineEmits<{ close: []; recreate: [asset: assetApi.Asset] }>()
+const emit = defineEmits<{ close: []; recreate: [asset: assetApi.Asset]; rename: [asset: assetApi.Asset]; delete: [asset: assetApi.Asset] }>()
 const downloading = ref(false)
 const referencePreviewUrls = ref<Record<string, string>>({})
+const { downloadAsset: downloadAssetFile } = useAssetDownload()
 
 const generation = computed(() => props.asset.generation)
 const typeLabel = computed(() => props.asset.type === "image" ? "图片" : props.asset.type === "video" ? "视频" : "音频")
 const sourceLabel = computed(() => props.asset.source === "generated" ? "AI 生成" : "用户上传")
 const statusLabel = computed(() => ({ ready: "已完成", generating: "生成中", needs_review: "等待确认", failed: "失败" })[props.asset.status])
-const videoModeLabel = computed(() => ({ text: "文生视频", frames: "首尾帧", reference: "全能参考" })[generation.value?.videoMode || ""] || generation.value?.videoMode || "")
+const videoModeLabel = computed(() => ({ text: "文生视频", frames: "首尾帧", reference: "全能参考", extend: "视频延长", lip_sync: "对口型", edit: "视频编辑", motion_transfer: "动作迁移" })[generation.value?.videoMode || ""] || "未知模式")
+const taskStatusLabel = computed(() => ({ queued: "排队中", running: "生成中", needs_review: "等待确认", succeeded: "已完成", failed: "失败", cancelled: "已取消" })[generation.value?.status || ""] || "未知状态")
 const canRecreate = computed(() => Boolean(generation.value && (props.asset.type === "image" || props.asset.type === "video")))
 
 watch(() => props.asset.id, () => void loadReferencePreviews(), { immediate: true })
@@ -37,7 +38,7 @@ const detailRows = computed(() => {
   if (!task) return rows.filter(([, value]) => value)
   rows.splice(3, 0,
     ["模型", task.model],
-    ["任务状态", task.status],
+    ["任务状态", taskStatusLabel.value],
     ["执行器", task.provider],
     ["渠道", task.channelName || "-"],
     ["协议", task.protocol || task.provider],
@@ -118,15 +119,7 @@ async function downloadAsset() {
   if (downloading.value) return
   downloading.value = true
   try {
-    const blob = await assetApi.getAssetContent(props.asset.downloadUrl)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = props.asset.originalName || props.asset.title
-    link.click()
-    URL.revokeObjectURL(url)
-  } catch (error) {
-    notification.error(apiErrorMessage(error, "素材下载失败"))
+    await downloadAssetFile(props.asset)
   } finally {
     downloading.value = false
   }
@@ -163,7 +156,9 @@ async function downloadAsset() {
         </div>
         <footer class="asset-viewer__actions">
           <button v-if="canRecreate" class="asset-viewer__recreate" type="button" @click="emit('recreate', asset)">用同款参数创作</button>
+          <button type="button" title="重命名素材" aria-label="重命名素材" @click="emit('rename', asset)"><Pencil :size="18" /></button>
           <button type="button" title="下载素材" aria-label="下载素材" :disabled="downloading" @click="downloadAsset"><LoaderCircle v-if="downloading" class="spin" :size="18" /><Download v-else :size="18" /></button>
+          <button type="button" title="删除素材" aria-label="删除素材" @click="emit('delete', asset)"><Trash2 :size="18" /></button>
           <button type="button" title="关闭预览" aria-label="关闭预览" @click="emit('close')"><X :size="18" /></button>
         </footer>
       </aside>
@@ -173,7 +168,7 @@ async function downloadAsset() {
 
 <style scoped>
 .asset-viewer { position: fixed; z-index: 80; inset: 0; display: flex; align-items: center; justify-content: center; padding: 28px; background: rgb(9 12 16 / 76%); backdrop-filter: blur(10px); }
-.asset-viewer__panel { position: relative; display: grid; width: min(1180px, 100%); height: clamp(460px, calc(100dvh - 80px), 760px); grid-template-columns: minmax(0, 1fr) 340px; overflow: hidden; border: 1px solid rgb(255 255 255 / 18%); border-radius: 8px; background: #0c1015; box-shadow: 0 30px 80px rgb(0 0 0 / 40%); }
+.asset-viewer__panel { position: relative; display: grid; width: min(1180px, 100%); height: clamp(440px, calc(100dvh - 140px), 680px); grid-template-columns: minmax(0, 1fr) 340px; overflow: hidden; border: 1px solid rgb(255 255 255 / 18%); border-radius: 8px; background: #0c1015; box-shadow: 0 30px 80px rgb(0 0 0 / 40%); }
 .asset-viewer__media { display: flex; min-width: 0; min-height: 0; align-items: center; justify-content: center; overflow: hidden; background: #070a0e; }
 .asset-viewer__media > img,.asset-viewer__media > video { display: block; width: 100%; height: 100%; object-fit: contain; }
 .asset-viewer__audio { display: flex; width: min(560px, calc(100% - 48px)); flex-direction: column; align-items: center; gap: 24px; color: #b8c0cc; }

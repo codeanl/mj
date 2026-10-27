@@ -22,6 +22,7 @@ type Config struct {
 	JWTAccessTTL      time.Duration
 	AssetDataDir      string
 	AssetMaxBytes     int64
+	AssetDownloadTTL  time.Duration
 	OpenAIBaseURL     string
 	OpenAIAPIKey      string
 	ImageModel        string
@@ -46,6 +47,7 @@ func Load() Config {
 		JWTAccessTTL:      envDuration("JWT_ACCESS_TTL", 24*time.Hour),
 		AssetDataDir:      env("ASSET_DATA_DIR", ".data/assets"),
 		AssetMaxBytes:     envInt64("ASSET_MAX_UPLOAD_BYTES", 256*1024*1024),
+		AssetDownloadTTL:  envDuration("ASSET_DOWNLOAD_TTL", 2*time.Minute),
 		OpenAIBaseURL:     env("OPENAI_BASE_URL", "https://gptcodex.top/v1"),
 		OpenAIAPIKey:      strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
 		ImageModel:        env("OPENAI_IMAGE_MODEL", "gpt-image-2"),

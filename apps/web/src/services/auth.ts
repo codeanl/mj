@@ -29,6 +29,23 @@ export type LoginInput = {
   password: string
 }
 
+export type AccountSession = {
+  id: string
+  userAgent: string
+  ipAddress: string
+  expiresAt: string
+  lastSeenAt: string
+  createdAt: string
+  current: boolean
+}
+
+export type AccountDeletionRequest = {
+  id: string
+  status: "pending" | "cancelled" | "completed"
+  requestedAt: string
+  cancelledAt?: string
+}
+
 export async function register(input: RegisterInput) {
   const response = await http.post<ApiResponse<AuthResult>>("/auth/register", input)
   return response.data.data
@@ -42,6 +59,41 @@ export async function login(input: LoginInput) {
 export async function getCurrentUser() {
   const response = await http.get<ApiResponse<CurrentUser>>("/auth/me")
   return response.data.data
+}
+
+export async function logout() {
+  await http.post("/auth/logout")
+}
+
+export async function changePassword(input: { currentPassword: string; newPassword: string }) {
+  await http.patch("/profile/password", input)
+}
+
+export async function listSessions() {
+  const response = await http.get<ApiResponse<{ items: AccountSession[] }>>("/profile/sessions")
+  return response.data.data.items
+}
+
+export async function revokeSession(sessionId: string) {
+  await http.delete(`/profile/sessions/${encodeURIComponent(sessionId)}`)
+}
+
+export async function revokeOtherSessions() {
+  await http.post("/profile/sessions/revoke-others")
+}
+
+export async function getAccountDeletionRequest() {
+  const response = await http.get<ApiResponse<AccountDeletionRequest | null>>("/profile/deletion-request")
+  return response.data.data
+}
+
+export async function requestAccountDeletion(currentPassword: string) {
+  const response = await http.post<ApiResponse<AccountDeletionRequest>>("/profile/deletion-request", { currentPassword })
+  return response.data.data
+}
+
+export async function cancelAccountDeletion() {
+  await http.delete("/profile/deletion-request")
 }
 
 export async function updateProfile(input: { username: string }) {

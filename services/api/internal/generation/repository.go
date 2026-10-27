@@ -185,7 +185,7 @@ func (repository *Repository) CreateVideo(ctx context.Context, userID, requestID
 			valid = valid && kind == "image" && (reference.Role == VideoRoleFirstFrame || reference.Role == VideoRoleLastFrame)
 		} else {
 			expectedRoles := map[string]string{"image": VideoRoleImage, "video": VideoRoleVideo, "audio": VideoRoleAudio}
-			valid = valid && options.Mode == VideoModeReference && expectedRoles[kind] == reference.Role
+			valid = valid && (options.Mode == VideoModeReference || isSpecialVideoMode(options.Mode)) && expectedRoles[kind] == reference.Role
 		}
 		if !valid {
 			return Task{}, 0, ErrInvalidVideoReference
@@ -422,7 +422,7 @@ func (repository *Repository) GetReferences(ctx context.Context, task Task) ([]s
 		rows, err := repository.pool.Query(ctx, `
 			SELECT coalesce(asset.storage_key,''),coalesce(asset.original_name,''),coalesce(asset.mime_type,''),asset.kind,item.value->>'role'
 			FROM generation_tasks task
-			CROSS JOIN LATERAL jsonb_array_elements(coalesce(task.parameters->'videoReferences','[]'::jsonb)) WITH ORDINALITY AS item(value,position)
+			CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(task.parameters->'videoReferences')='array' THEN task.parameters->'videoReferences' ELSE '[]'::jsonb END) WITH ORDINALITY AS item(value,position)
 			JOIN media_assets asset ON asset.id=(item.value->>'assetId')::uuid AND asset.user_id=task.user_id AND asset.status='ready'
 			WHERE task.id=$1 AND task.user_id=$2
 			ORDER BY item.position

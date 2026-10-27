@@ -76,7 +76,7 @@ func (service *Service) store(ctx context.Context, input UploadInput, source Sou
 }
 
 func (service *Service) List(ctx context.Context, userID string, kind Kind, source Source, status Status, search string, page, pageSize int) (Page, error) {
-	if userID == "" || page < 1 || (pageSize != 8 && pageSize != 12 && pageSize != 20) {
+	if userID == "" || page < 1 || (pageSize != 6 && pageSize != 8 && pageSize != 12 && pageSize != 20) {
 		return Page{}, ErrInvalidAsset
 	}
 	if kind != "" && kind != KindImage && kind != KindVideo && kind != KindAudio {
@@ -89,6 +89,68 @@ func (service *Service) List(ctx context.Context, userID string, kind Kind, sour
 		return Page{}, ErrInvalidAsset
 	}
 	return service.repository.List(ctx, userID, kind, source, status, strings.TrimSpace(search), page, pageSize)
+}
+
+func (service *Service) Rename(ctx context.Context, userID, id, title string) (Asset, error) {
+	title = strings.TrimSpace(title)
+	if userID == "" || id == "" || title == "" || len([]rune(title)) > 120 {
+		return Asset{}, ErrInvalidAsset
+	}
+	return service.repository.Rename(ctx, userID, id, title)
+}
+
+func (service *Service) DeleteMany(ctx context.Context, userID string, ids []string) (int, error) {
+	unique, err := validateAssetIDs(userID, ids)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := service.repository.DeleteMany(ctx, userID, unique)
+	if err != nil {
+		return 0, err
+	}
+	for _, asset := range deleted {
+		if asset.StorageKey != "" {
+			_ = service.storage.Delete(asset.StorageKey)
+		}
+		_ = service.storage.Delete(asset.ID + ".thumb.jpg")
+		_ = service.storage.Delete(asset.ID + ".poster.jpg")
+	}
+	return len(deleted), nil
+}
+
+func (service *Service) Stats(ctx context.Context, userID string) (Stats, error) {
+	if userID == "" {
+		return Stats{}, ErrInvalidAsset
+	}
+	return service.repository.Stats(ctx, userID)
+}
+
+func (service *Service) FindMany(ctx context.Context, userID string, ids []string) ([]Asset, error) {
+	unique, err := validateAssetIDs(userID, ids)
+	if err != nil {
+		return nil, err
+	}
+	return service.repository.FindMany(ctx, userID, unique)
+}
+
+func validateAssetIDs(userID string, ids []string) ([]string, error) {
+	if userID == "" || len(ids) == 0 {
+		return nil, ErrInvalidAsset
+	}
+	seen := make(map[string]struct{}, len(ids))
+	unique := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if _, err := uuid.Parse(id); err != nil {
+			return nil, ErrInvalidAsset
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	return unique, nil
 }
 
 func (service *Service) Open(ctx context.Context, userID, id string) (Asset, io.ReadSeekCloser, error) {
@@ -193,9 +255,17 @@ func ParseMediaType(mimeType string) (Kind, string, bool) {
 }
 
 func ContentDisposition(asset Asset) string {
+	return mime.FormatMediaType("attachment", map[string]string{"filename": Filename(asset)})
+}
+
+func Filename(asset Asset) string {
 	extension := filepath.Ext(asset.OriginalName)
 	if extension == "" {
 		_, extension, _ = ParseMediaType(asset.MimeType)
 	}
-	return mime.FormatMediaType("attachment", map[string]string{"filename": fmt.Sprintf("%s%s", asset.Title, extension)})
+	filename := asset.Title
+	if filepath.Ext(filename) == "" {
+		filename = fmt.Sprintf("%s%s", filename, extension)
+	}
+	return filename
 }

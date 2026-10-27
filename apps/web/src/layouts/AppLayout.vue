@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, nextTick, ref } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
   Boxes,
@@ -9,6 +9,8 @@ import {
   House,
   LogOut,
   Menu,
+  Moon,
+  Sun,
   X,
 } from "@lucide/vue"
 
@@ -21,6 +23,8 @@ const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const logoutConfirmationOpen = ref(false)
+const logoutCancelButton = ref<HTMLButtonElement | null>(null)
 
 const primaryNavigation = [
   { label: "创作", path: "/", icon: House },
@@ -32,8 +36,20 @@ const currentTitle = computed(() => String(route.meta.title || "创作工作台"
 const isActive = (path: string) => (path === "/" ? route.path === "/" : route.path.startsWith(path))
 
 async function logout() {
-  authStore.logout()
+  logoutConfirmationOpen.value = false
+  await authStore.logout()
   await router.replace("/login")
+}
+
+async function requestLogout() {
+  appStore.closeMobileNavigation()
+  logoutConfirmationOpen.value = true
+  await nextTick()
+  logoutCancelButton.value?.focus()
+}
+
+function cancelLogout() {
+  logoutConfirmationOpen.value = false
 }
 
 function formatPoints(value: number | undefined) {
@@ -42,10 +58,10 @@ function formatPoints(value: number | undefined) {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'app-shell--dark': appStore.darkMode }">
     <aside class="sidebar" :class="{ 'sidebar--open': appStore.mobileNavigationOpen }">
       <div class="sidebar__brand">
-        <BrandMark />
+        <BrandMark title="NOVA" />
         <div>
           <strong>NOVA</strong>
           <span>CREATOR STUDIO</span>
@@ -62,6 +78,8 @@ function formatPoints(value: number | undefined) {
           :to="item.path"
           class="nav-item"
           :class="{ 'nav-item--active': isActive(item.path) }"
+          :title="item.label"
+          :aria-label="item.label"
           @click="appStore.closeMobileNavigation"
         >
           <component :is="item.icon" :size="18" />
@@ -70,8 +88,13 @@ function formatPoints(value: number | undefined) {
       </nav>
 
       <div class="sidebar__bottom">
+        <button class="sidebar-theme" type="button" :title="appStore.darkMode ? '切换浅色模式' : '切换暗黑模式'" :aria-label="appStore.darkMode ? '切换浅色模式' : '切换暗黑模式'" @click="appStore.toggleDarkMode">
+          <Sun v-if="appStore.darkMode" :size="17" />
+          <Moon v-else :size="17" />
+          <span>{{ appStore.darkMode ? "浅色模式" : "暗黑模式" }}</span>
+        </button>
         <div class="profile-strip">
-          <RouterLink class="profile-strip__identity" to="/profile" @click="appStore.closeMobileNavigation">
+          <RouterLink class="profile-strip__identity" to="/profile" title="个人中心" aria-label="个人中心" @click="appStore.closeMobileNavigation">
             <UserAvatar class="profile-strip__avatar" />
             <span class="profile-strip__copy">
             <strong>{{ authStore.user?.username }}</strong>
@@ -79,7 +102,7 @@ function formatPoints(value: number | undefined) {
             <small class="profile-strip__points" title="积分余额"><Coins :size="12" />{{ formatPoints(authStore.user?.pointsBalance) }} 积分</small>
             </span>
           </RouterLink>
-          <button type="button" aria-label="退出登录" title="退出登录" @click="logout"><LogOut :size="16" /></button>
+          <button type="button" aria-label="退出登录" title="退出登录" @click="requestLogout"><LogOut :size="16" /></button>
         </div>
       </div>
     </aside>
@@ -101,13 +124,23 @@ function formatPoints(value: number | undefined) {
           <Clapperboard :size="17" />
           <span>{{ currentTitle }}</span>
         </div>
-        <span class="mobile-user-balance"><Coins :size="13" />{{ formatPoints(authStore.user?.pointsBalance) }}</span>
-        <RouterLink to="/profile" aria-label="个人中心"><UserAvatar class="profile-strip__avatar profile-strip__avatar--small" /></RouterLink>
       </header>
 
       <main class="page-scroll">
         <RouterView />
       </main>
     </section>
+
+    <div v-if="logoutConfirmationOpen" class="logout-confirmation" @click.self="cancelLogout" @keydown.esc="cancelLogout">
+      <section class="logout-confirmation__dialog" role="dialog" aria-modal="true" aria-labelledby="logout-confirmation-title" aria-describedby="logout-confirmation-description">
+        <span class="logout-confirmation__icon"><LogOut :size="20" /></span>
+        <h2 id="logout-confirmation-title">确认退出登录</h2>
+        <p id="logout-confirmation-description">退出后需要重新登录才能继续创作。</p>
+        <div class="logout-confirmation__actions">
+          <button ref="logoutCancelButton" type="button" @click="cancelLogout">取消</button>
+          <button class="logout-confirmation__submit" type="button" @click="logout">退出登录</button>
+        </div>
+      </section>
+    </div>
   </div>
 </template>

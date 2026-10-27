@@ -10,9 +10,10 @@ import (
 var ErrInvalidToken = errors.New("invalid access token")
 
 type Claims struct {
-	Email    string `json:"email"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	Email     string `json:"email"`
+	Username  string `json:"username"`
+	Role      string `json:"role"`
+	SessionID string `json:"sid"`
 	jwt.RegisteredClaims
 }
 
@@ -26,13 +27,14 @@ func NewTokenManager(secret, issuer string, ttl time.Duration) TokenManager {
 	return TokenManager{secret: []byte(secret), issuer: issuer, ttl: ttl}
 }
 
-func (manager TokenManager) Issue(user User) (string, int64, error) {
+func (manager TokenManager) Issue(user User, sessionID string) (string, int64, error) {
 	now := time.Now()
 	expiresAt := now.Add(manager.ttl)
 	claims := Claims{
-		Email:    user.Email,
-		Username: user.Username,
-		Role:     user.Role,
+		Email:     user.Email,
+		Username:  user.Username,
+		Role:      user.Role,
+		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    manager.issuer,
 			Subject:   user.ID,
@@ -52,7 +54,7 @@ func (manager TokenManager) Parse(rawToken string) (Claims, error) {
 		}
 		return manager.secret, nil
 	}, jwt.WithIssuer(manager.issuer), jwt.WithExpirationRequired())
-	if err != nil || !token.Valid || claims.Subject == "" {
+	if err != nil || !token.Valid || claims.Subject == "" || claims.SessionID == "" {
 		return Claims{}, ErrInvalidToken
 	}
 	return claims, nil

@@ -9,6 +9,8 @@
   "scripts": {
     "dev:web": "pnpm --filter @nova/web dev",
     "dev:admin": "pnpm --filter @nova/admin dev",
+    "dev:desktop": "pnpm --filter @nova/desktop dev",
+    "package:desktop": "pnpm --filter @nova/desktop package",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck"
   }

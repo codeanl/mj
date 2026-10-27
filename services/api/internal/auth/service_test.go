@@ -12,11 +12,13 @@ import (
 )
 
 type memoryRepository struct {
-	users map[string]userRecord
+	users     map[string]userRecord
+	sessions  map[string]Session
+	deletions map[string]AccountDeletionRequest
 }
 
 func newMemoryRepository() *memoryRepository {
-	return &memoryRepository{users: map[string]userRecord{}}
+	return &memoryRepository{users: map[string]userRecord{}, sessions: map[string]Session{}, deletions: map[string]AccountDeletionRequest{}}
 }
 
 func (repository *memoryRepository) Create(_ context.Context, email, username, passwordHash string) (User, error) {
@@ -45,6 +47,15 @@ func (repository *memoryRepository) FindByID(_ context.Context, id string) (User
 	return User{}, ErrUserMissing
 }
 
+func (repository *memoryRepository) FindRecordByID(_ context.Context, id string) (userRecord, error) {
+	for _, record := range repository.users {
+		if record.ID == id {
+			return record, nil
+		}
+	}
+	return userRecord{}, ErrUserMissing
+}
+
 func (repository *memoryRepository) UpdateProfile(_ context.Context, id, username string) (User, error) {
 	for email, record := range repository.users {
 		if record.ID == id {
@@ -66,6 +77,80 @@ func (repository *memoryRepository) UpdateAvatar(_ context.Context, id, storageK
 		}
 	}
 	return User{}, ErrUserMissing
+}
+
+func (repository *memoryRepository) CreateSession(_ context.Context, id, userID string, client ClientInfo, expiresAt time.Time) error {
+	repository.sessions[id] = Session{ID: id, UserAgent: client.UserAgent, IPAddress: client.IPAddress, ExpiresAt: expiresAt, LastSeenAt: time.Now(), CreatedAt: time.Now()}
+	return nil
+}
+
+func (repository *memoryRepository) FindSession(_ context.Context, _ string, id string) (Session, error) {
+	session, exists := repository.sessions[id]
+	if !exists {
+		return Session{}, ErrInvalidSession
+	}
+	return session, nil
+}
+
+func (repository *memoryRepository) ListSessions(_ context.Context, _ string) ([]Session, error) {
+	sessions := make([]Session, 0, len(repository.sessions))
+	for _, session := range repository.sessions {
+		sessions = append(sessions, session)
+	}
+	return sessions, nil
+}
+
+func (repository *memoryRepository) RevokeSession(_ context.Context, _ string, id string) error {
+	if _, exists := repository.sessions[id]; !exists {
+		return ErrInvalidSession
+	}
+	delete(repository.sessions, id)
+	return nil
+}
+
+func (repository *memoryRepository) RevokeOtherSessions(_ context.Context, _ string, currentID string) error {
+	for id := range repository.sessions {
+		if id != currentID {
+			delete(repository.sessions, id)
+		}
+	}
+	return nil
+}
+
+func (repository *memoryRepository) ChangePassword(_ context.Context, userID, passwordHash, currentSessionID string) error {
+	for email, record := range repository.users {
+		if record.ID == userID {
+			record.PasswordHash = passwordHash
+			repository.users[email] = record
+			return repository.RevokeOtherSessions(context.Background(), userID, currentSessionID)
+		}
+	}
+	return ErrUserMissing
+}
+
+func (repository *memoryRepository) RequestAccountDeletion(_ context.Context, userID string) (AccountDeletionRequest, error) {
+	if request, exists := repository.deletions[userID]; exists {
+		return request, nil
+	}
+	request := AccountDeletionRequest{ID: "deletion-1", Status: "pending", RequestedAt: time.Now()}
+	repository.deletions[userID] = request
+	return request, nil
+}
+
+func (repository *memoryRepository) GetAccountDeletionRequest(_ context.Context, userID string) (*AccountDeletionRequest, error) {
+	request, exists := repository.deletions[userID]
+	if !exists {
+		return nil, nil
+	}
+	return &request, nil
+}
+
+func (repository *memoryRepository) CancelAccountDeletion(_ context.Context, userID string) error {
+	if _, exists := repository.deletions[userID]; !exists {
+		return ErrDeletionRequestMissing
+	}
+	delete(repository.deletions, userID)
+	return nil
 }
 
 func TestRegisterLoginAndCurrentUser(t *testing.T) {
@@ -157,5 +242,93 @@ func TestAvatarLifecycleUsesLocalStorage(t *testing.T) {
 	}
 	if _, err := service.OpenAvatar(context.Background(), "user-1"); !errors.Is(err, ErrAvatarMissing) {
 		t.Fatalf("expected missing avatar, got %v", err)
+	}
+}
+
+func TestSessionAndPasswordSecurityLifecycle(t *testing.T) {
+	repository := newMemoryRepository()
+	manager := NewTokenManager("test-secret-with-enough-entropy", "test-issuer", time.Hour)
+	service := NewService(repository, manager)
+	registered, err := service.Register(context.Background(), RegisterInput{Email: "security@example.com", Username: "安全用户", Password: "password123"}, ClientInfo{UserAgent: "first-device", IPAddress: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstClaims, err := manager.Parse(registered.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Login(context.Background(), LoginInput{Email: "security@example.com", Password: "password123"}, ClientInfo{UserAgent: "second-device", IPAddress: "127.0.0.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondClaims, err := manager.Parse(second.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := registered.User
+	current.SessionID = firstClaims.SessionID
+	sessions, err := service.ListSessions(context.Background(), current)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("list sessions: %#v err=%v", sessions, err)
+	}
+	if err := service.RevokeSession(context.Background(), current, firstClaims.SessionID); !errors.Is(err, ErrCurrentSession) {
+		t.Fatalf("current session must not be revoked by device management: %v", err)
+	}
+	if err := service.RevokeSession(context.Background(), current, secondClaims.SessionID); err != nil {
+		t.Fatalf("revoke other session: %v", err)
+	}
+	if _, err := service.CurrentUser(context.Background(), second.AccessToken); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("revoked token must stop working immediately: %v", err)
+	}
+
+	third, err := service.Login(context.Background(), LoginInput{Email: "security@example.com", Password: "password123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ChangePassword(context.Background(), current, ChangePasswordInput{CurrentPassword: "wrong-password", NewPassword: "new-password123"}); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong current password must fail: %v", err)
+	}
+	if err := service.ChangePassword(context.Background(), current, ChangePasswordInput{CurrentPassword: "password123", NewPassword: "new-password123"}); err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+	if _, err := service.Login(context.Background(), LoginInput{Email: "security@example.com", Password: "password123"}); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("old password must stop working: %v", err)
+	}
+	if _, err := service.CurrentUser(context.Background(), third.AccessToken); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("password change must revoke other sessions: %v", err)
+	}
+	if _, err := service.CurrentUser(context.Background(), registered.AccessToken); err != nil {
+		t.Fatalf("password change must retain current session: %v", err)
+	}
+}
+
+func TestAccountDeletionRequestLifecycle(t *testing.T) {
+	repository := newMemoryRepository()
+	service := NewService(repository, NewTokenManager("test-secret-with-enough-entropy", "test-issuer", time.Hour))
+	result, err := service.Register(context.Background(), RegisterInput{Email: "delete@example.com", Username: "注销用户", Password: "password123"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RequestAccountDeletion(context.Background(), result.User, RequestAccountDeletionInput{CurrentPassword: "wrong-password"}); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong password must not create request: %v", err)
+	}
+	request, err := service.RequestAccountDeletion(context.Background(), result.User, RequestAccountDeletionInput{CurrentPassword: "password123"})
+	if err != nil || request.Status != "pending" {
+		t.Fatalf("request account deletion: %#v err=%v", request, err)
+	}
+	pending, err := service.GetAccountDeletionRequest(context.Background(), result.User)
+	if err != nil || pending == nil || pending.ID != request.ID {
+		t.Fatalf("get account deletion request: %#v err=%v", pending, err)
+	}
+	if err := service.CancelAccountDeletion(context.Background(), result.User); err != nil {
+		t.Fatalf("cancel account deletion request: %v", err)
+	}
+	if pending, err = service.GetAccountDeletionRequest(context.Background(), result.User); err != nil || pending != nil {
+		t.Fatalf("cancelled request must not remain pending: %#v err=%v", pending, err)
+	}
+	admin := result.User
+	admin.Role = "admin"
+	if _, err := service.RequestAccountDeletion(context.Background(), admin, RequestAccountDeletionInput{CurrentPassword: "password123"}); !errors.Is(err, ErrAdminDeletionForbidden) {
+		t.Fatalf("administrator deletion request must fail: %v", err)
 	}
 }
