@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
-import { AlertTriangle, Camera, Check, KeyRound, LoaderCircle, MonitorSmartphone, ShieldCheck, Trash2, UserRound } from "@lucide/vue"
+import { AlertTriangle, Camera, Check, Gift, KeyRound, LoaderCircle, MonitorSmartphone, ShieldCheck, Trash2, UserRound } from "@lucide/vue"
 
 import UserAvatar from "@/components/UserAvatar.vue"
 import { apiErrorMessage } from "@/services/http"
 import { notification } from "@/services/notifications"
 import { useAuthStore } from "@/stores/auth"
 import * as authApi from "@/services/auth"
+import { redeemCdk } from "@/services/cdk"
 
 const authStore = useAuthStore()
 const username = ref(authStore.user?.username || "")
@@ -26,6 +27,8 @@ const revokingSessionId = ref("")
 const deletionRequest = ref<authApi.AccountDeletionRequest | null>(null)
 const deletionPassword = ref("")
 const submittingDeletion = ref(false)
+const cdkCode = ref("")
+const redeemingCdk = ref(false)
 
 const accountRole = computed(() => authStore.user?.role === "admin" ? "管理员" : "创作者")
 const accountStatus = computed(() => authStore.user?.status === "active" ? "正常" : "已停用")
@@ -127,6 +130,22 @@ async function savePassword() {
     notification.error(apiErrorMessage(error, "密码修改失败"))
   } finally {
     savingPassword.value = false
+  }
+}
+
+async function submitCdk() {
+  const code = cdkCode.value.trim()
+  if (!code || redeemingCdk.value) return
+  redeemingCdk.value = true
+  try {
+    const result = await redeemCdk(code)
+    authStore.setPointsBalance(result.balance)
+    cdkCode.value = ""
+    notification.success(`兑换成功，获得 ${Number(result.points).toLocaleString("zh-CN", { maximumFractionDigits: 2 })} 积分`)
+  } catch (error) {
+    notification.error(apiErrorMessage(error, "CDK 兑换失败"))
+  } finally {
+    redeemingCdk.value = false
   }
 }
 
@@ -271,6 +290,14 @@ onMounted(() => void Promise.all([loadSessions(), loadDeletionRequest()]))
             <div><dt>注册时间</dt><dd>{{ joinedAt }}</dd></div>
             <div><dt>加入天数</dt><dd>{{ membershipDays }}</dd></div>
           </dl>
+        </section>
+
+        <section class="profile-section profile-section--cdk">
+          <div class="profile-section__heading"><div><h2>CDK 兑换</h2><p>输入管理员发放的兑换密钥，积分会立即计入当前账号</p></div><Gift :size="19" /></div>
+          <form class="profile-cdk-form" @submit.prevent="submitCdk">
+            <label><span>兑换密钥</span><div class="profile-input"><Gift :size="17" /><input v-model="cdkCode" maxlength="40" autocomplete="off" spellcheck="false" placeholder="NOVA-XXXXX-XXXXX-XXXXX" @input="cdkCode = cdkCode.toUpperCase()" /></div></label>
+            <button class="profile-button profile-button--primary" type="submit" :disabled="!cdkCode.trim() || redeemingCdk"><LoaderCircle v-if="redeemingCdk" class="spin" :size="16" /><Gift v-else :size="16" />立即兑换</button>
+          </form>
         </section>
 
         <section class="profile-section">

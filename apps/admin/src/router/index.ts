@@ -8,6 +8,7 @@ const adminSections = [
   ["channels", "模型渠道", "配置供应商、密钥、模型目录和路由。"],
 	["generation", "生成任务", "追踪生成状态、上游渠道、积分与失败原因。"],
   ["points", "积分规则", "配置新用户积分、模型基础扣费和生成参数倍率。"],
+  ["cdk", "CDK 管理", "批量生成、查询和管理积分兑换密钥。"],
   ["audit", "操作审计", "追踪管理员敏感操作、目标、请求来源和变更快照。"],
 ] as const
 
@@ -17,6 +18,7 @@ const sectionComponents = {
   channels: () => import("@/views/ChannelsView.vue"),
   generation: () => import("@/views/GenerationTasksView.vue"),
   points: () => import("@/views/PointsRulesView.vue"),
+  cdk: () => import("@/views/CdkView.vue"),
   audit: () => import("@/views/AuditLogView.vue"),
 }
 

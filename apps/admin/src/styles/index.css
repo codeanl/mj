@@ -334,6 +334,179 @@ button { border: 0; }
 	.generation-image-preview__body > div { align-items: flex-start; flex-direction: column; gap: 4px; }
 }
 
+.admin-login-theme { position: fixed; z-index: 2; top: 18px; right: 18px; border: 1px solid #dfe3e8; background: rgb(255 255 255 / 82%); backdrop-filter: blur(12px); }
+
+html.dark {
+  --el-bg-color: #171c22;
+  --el-bg-color-page: #101418;
+  --el-bg-color-overlay: #1c2229;
+  --el-fill-color: #242b33;
+  --el-fill-color-light: #20262d;
+  --el-fill-color-lighter: #1c2229;
+  --el-fill-color-extra-light: #191f25;
+  --el-fill-color-dark: #2b333d;
+  --el-fill-color-darker: #343e49;
+  --el-fill-color-blank: #171c22;
+  --el-text-color-primary: #eef1f4;
+  --el-text-color-regular: #c6cdd5;
+  --el-text-color-secondary: #929ca7;
+  --el-text-color-placeholder: #6f7984;
+  --el-text-color-disabled: #59636d;
+  --el-border-color: #343c45;
+  --el-border-color-light: #303840;
+  --el-border-color-lighter: #29313a;
+  --el-border-color-extra-light: #252c34;
+  --el-border-color-dark: #414b56;
+  --el-border-color-darker: #4d5865;
+  background: #101418;
+  color: #e7ebef;
+}
+
+.dark .admin-shell,
+.dark .admin-main,
+.dark .admin-content { background: #101418; color: #dce2e7; }
+.dark .admin-sidebar,
+.dark .admin-header { border-color: #29313a; background: #171c22; }
+.dark .admin-brand,
+.dark .admin-user { border-color: #29313a; }
+.dark .admin-brand strong,
+.dark .admin-user strong { color: #eef1f4; }
+.dark .admin-brand small,
+.dark .admin-user small,
+.dark .admin-nav h2 { color: #77818c; }
+.dark .admin-nav a { color: #aab3bc; }
+.dark .admin-nav a:hover { background: #20272f; color: #f6f8fa; }
+.dark .admin-nav a.router-link-active { background: rgb(92 108 232 / 18%); color: #aab5ff; }
+.dark .admin-user__avatar { background: #eef1f4; color: #161b21; }
+.dark .icon-button { color: #aab3bd; }
+.dark .icon-button:hover { background: #252c34; color: #fff; }
+.dark .admin-backdrop { background: rgb(0 0 0 / 64%); }
+
+.dark .admin-login-page { background: radial-gradient(circle at 20% 10%, rgb(80 94 190 / 16%), transparent 35%), #101418; }
+.dark .admin-login-panel { border-color: #303840; background: #171c22; box-shadow: 0 24px 70px rgb(0 0 0 / 36%); }
+.dark .admin-login-panel h1,
+.dark .admin-login-brand strong { color: #eef1f4; }
+.dark .admin-login-brand small,
+.dark .admin-login-hint { color: #929ca7; }
+.dark .admin-login-panel label { color: #cbd2d9; }
+.dark .admin-login-input { border-color: #343d46; background: #14191e; color: #89949f; }
+.dark .admin-login-input:focus-within { border-color: #7787f0; box-shadow: 0 0 0 3px rgb(103 119 232 / 16%); }
+.dark .admin-login-input input { background: transparent; color: #eef1f4; }
+.dark .admin-login-error { border-color: #6e3e45; background: rgb(181 59 70 / 12%); color: #f1a2aa; }
+.dark .admin-login-submit { background: #eef1f4; color: #151a20; }
+.dark .admin-login-submit:hover:not(:disabled) { background: #fff; }
+.dark .admin-login-theme { border-color: #343d46; background: rgb(23 28 34 / 84%); }
+
+.dark .admin-shell :where(.channels-workspace, .users-workspace, .points-workspace, .generation-workspace, .audit-workspace, .dashboard-metrics, .dashboard-section) {
+  border-color: #303840;
+  background: #171c22;
+}
+.dark .admin-shell :where(.channel-metrics, .channel-toolbar, .channel-observability, .user-metrics, .user-toolbar, .user-pagination, .points-metrics, .points-actions, .points-section, .generation-metrics, .generation-toolbar, .generation-pagination, .audit-toolbar, .audit-pagination, .dashboard-section > header) {
+  border-color: #2d353e;
+}
+.dark .admin-shell :where(.channel-metrics > div + div, .channel-observability > section + section, .channel-stats-summary div + div, .user-metrics > div + div, .points-metrics > div + div, .generation-metrics > div + div, .dashboard-metrics article + article) {
+  border-color: #2d353e;
+}
+.dark .admin-shell :where(.channel-metrics strong, .user-metrics strong, .points-metrics strong, .generation-metrics strong, .dashboard-metrics strong, .channel-name strong, .user-identity strong, .points-section-heading strong, .points-model-grid strong, .generation-detail section > strong, .dashboard-section > header strong, .dashboard-feed strong, .audit-detail section > strong) {
+  color: #eef1f4;
+}
+.dark .admin-shell :where(.channel-metrics span, .user-metrics span, .points-metrics span, .generation-metrics span, .dashboard-metrics span, .points-actions, .points-section-heading span, .points-model-grid small, .dashboard-section > header span, .dashboard-feed small, .admin-state, .channel-loading, .channel-empty, .user-loading, .user-empty, .points-loading, .points-empty, .generation-loading, .generation-empty, .dashboard-empty) {
+  color: #929ca7;
+}
+
+.dark .admin-shell :where(.channel-search, .user-search, .generation-search, .audit-search) { border-color: #343d46; background: #14191e; color: #7f8a95; }
+.dark .admin-shell :where(.channel-search input, .user-search input, .generation-search input, .audit-search input) { color: #eef1f4; }
+.dark .admin-shell :where(.user-search button, .generation-search button, .audit-search button) { border-color: #343d46; background: #222930; color: #bdc5cd; }
+.dark .admin-shell .channel-toolbar > select { border-color: #343d46; background: #171c22; color: #d2d8de; }
+.dark .admin-shell :where(.channel-primary, .user-primary, .generation-refresh, .admin-empty__action, .admin-state button) { background: #eef1f4; color: #151a20; }
+.dark .admin-shell :where(.channel-primary, .user-primary, .generation-refresh, .admin-empty__action, .admin-state button):hover:not(:disabled) { background: #fff; color: #101418; }
+
+.dark .admin-shell :where(.channel-table th, .user-table th, .generation-table th, .audit-table th) { background: #1d232a; color: #9fa9b3; }
+.dark .admin-shell :where(.channel-table td, .user-table td, .generation-table td, .audit-table td) { border-color: #29313a; color: #c4cbd2; }
+.dark .admin-shell :where(.channel-actions > button, .channel-model-ops > button, .user-actions button, .points-model-grid button, .generation-actions button, .audit-detail-button) { background: #252c34; color: #bdc5cd; }
+.dark .admin-shell :where(.channel-actions > button, .channel-model-ops > button, .user-actions button, .points-model-grid button, .generation-actions button, .audit-detail-button):hover:not(:disabled) { background: #303943; color: #fff; }
+
+.dark .admin-shell :where(.channel-route-list article, .channel-stats-summary, .channel-window, .channel-model-list, .channel-model-empty, .channel-advanced-grid, .channel-protocol-operations section, .protocol-grid > button, .user-password-panel, .points-capability-tabs, .points-multiplier-panel, .generation-detail section, .audit-detail dl, .audit-detail pre, .generation-cursor-pagination button) {
+  border-color: #343d46;
+  background: #1b2127;
+  color: #c7ced5;
+}
+.dark .admin-shell .channel-route-list article.is-selected,
+.dark .admin-shell .protocol-grid > button.is-selected { border-color: #7887ec; background: rgb(93 109 225 / 13%); box-shadow: inset 0 0 0 1px #7887ec; }
+.dark .admin-shell .protocol-grid > button:hover { border-color: #606b77; background: #222930; }
+.dark .admin-shell :where(.channel-switch-row, .channel-models-section, .channel-model-list > div + div, .channel-traffic-list > div, .points-model-grid > div, .generation-detail-head, .generation-detail-actions, .generation-attempts article + article) { border-color: #2d353e; }
+.dark .admin-shell :where(.channel-form-grid label > span:first-child, .user-form-grid label > span:first-child, .points-base-grid label > span, .points-multiplier-panel > strong, .generation-detail dd, .audit-detail dd, .generation-image-preview__body strong) { color: #cbd2d9; }
+.dark .admin-shell :where(.channel-advanced summary, .channel-protocol-operations section > strong, .user-password-panel strong, .points-model-grid strong, .generation-task-id, .generation-detail section > p, .audit-detail pre) { color: #c4cbd3; }
+
+.dark .admin-shell .points-capability-tabs { background: #14191e; }
+.dark .admin-shell .points-capability-tabs button { color: #9da7b1; }
+.dark .admin-shell .points-capability-tabs button.is-active,
+.dark .admin-shell .channel-window button.active { background: #eef1f4; color: #151a20; }
+.dark .admin-shell .user-self-note { border-color: #40517d; background: rgb(82 102 168 / 13%); color: #a9b9ef; }
+.dark .admin-shell .user-points-balance { border-color: #64582f; background: rgb(139 111 32 / 12%); color: #dfc66d; }
+.dark .admin-shell :where(.user-points, .generation-cost, .user-mobile-meta strong) { color: #dfc66d; }
+
+.dark .admin-shell :where(.channel-mobile-list article, .user-mobile-list article, .generation-mobile-list article) { border-color: #343d46; background: #1b2127; }
+.dark .admin-shell :where(.channel-mobile-actions > button, .user-mobile-actions button, .generation-mobile-list article > button) { background: #252c34; color: #c4cbd3; }
+.dark .admin-shell :where(.channel-mobile-test, .user-mobile-actions) { border-color: #303840; }
+.dark .admin-shell :where(.channel-mobile-list dd, .generation-mobile-list article > strong) { color: #e3e7eb; }
+.dark .admin-shell .generation-task-thumb { border-color: #343d46; background: #20272e; color: #9da7b1; }
+
+.dark .admin-shell .channel-status,
+.dark .admin-shell .user-role,
+.dark .admin-shell .user-status,
+.dark .admin-shell .generation-status { border-color: #46505a; background: #252c34; color: #b8c0c8; }
+.dark .admin-shell :where(.channel-status.is-enabled, .user-status, .generation-status.is-succeeded) { border-color: rgb(72 185 137 / 36%); background: rgb(54 174 123 / 14%); color: #78d4a7; }
+.dark .admin-shell :where(.channel-status.is-error, .generation-status.is-failed) { border-color: rgb(210 83 94 / 40%); background: rgb(190 61 73 / 14%); color: #f09ba4; }
+.dark .admin-shell :where(.generation-status.is-running, .user-role.is-admin) { border-color: rgb(108 126 232 / 42%); background: rgb(88 106 218 / 15%); color: #aab6ff; }
+.dark .admin-shell :where(.generation-status.is-queued, .generation-status.is-needs_review) { border-color: rgb(205 165 64 / 42%); background: rgb(185 142 36 / 14%); color: #e7cb70; }
+.dark .admin-shell :where(.generation-status.is-cancelled, .user-status.is-disabled) { border-color: #46505a; background: #252c34; color: #aab2ba; }
+.dark .admin-shell .generation-error { border-color: #6e3e45 !important; background: rgb(181 59 70 / 10%); }
+
+.dark .admin-shell .audit-action { border-color: rgb(108 126 232 / 42%); background: rgb(88 106 218 / 15%); color: #aab6ff; }
+.dark .admin-shell .audit-action.is-failed { border-color: rgb(210 83 94 / 40%); background: rgb(190 61 73 / 14%); color: #f09ba4; }
+.dark .admin-shell .dashboard-chart__bars { border-color: #343d46; }
+.dark .admin-shell .dashboard-chart__bars .is-total { background: #505b88; }
+.dark .admin-shell .dashboard-chart__bars .is-success { background: #7888ee; }
+.dark .admin-shell .dashboard-section > header a { color: #9cafff; }
+
+.dark .admin-shell .cdk-metrics,
+.dark .admin-shell .cdk-panel { border-color: #303840 !important; background: #171c22 !important; }
+.dark .admin-shell .cdk-metrics > div,
+.dark .admin-shell .cdk-result-actions,
+.dark .admin-shell .cdk-created-list article,
+.dark .admin-shell .cdk-manager-head,
+.dark .admin-shell .cdk-pagination { border-color: #2d353e !important; }
+.dark .admin-shell :where(.cdk-metrics strong, .cdk-panel header strong, .cdk-created-list strong, .cdk-code-cell strong) { color: #eef1f4 !important; }
+.dark .admin-shell :where(.cdk-metrics span, .cdk-panel header small, .cdk-created-list small, .cdk-code-cell small, .cdk-muted, .cdk-pagination, .cdk-empty) { color: #929ca7 !important; }
+.dark .admin-shell .cdk-form-grid label { color: #cbd2d9 !important; }
+.dark .admin-shell :where(.cdk-created-list button, .cdk-row-actions button) { background: #252c34 !important; color: #bdc5cd !important; }
+.dark .admin-shell :where(.cdk-created-list button, .cdk-row-actions button):hover { background: #303943 !important; color: #fff !important; }
+.dark .admin-shell .cdk-panel header > span { background: rgb(54 174 123 / 14%) !important; color: #78d4a7 !important; }
+.dark .admin-shell .cdk-status.is-active { border-color: rgb(72 185 137 / 36%) !important; background: rgb(54 174 123 / 14%) !important; color: #78d4a7 !important; }
+.dark .admin-shell .cdk-status.is-partial { border-color: rgb(72 147 196 / 40%) !important; background: rgb(56 127 173 / 14%) !important; color: #8dc7e9 !important; }
+.dark .admin-shell .cdk-status.is-used { border-color: #46505a !important; background: #252c34 !important; color: #b8c0c8 !important; }
+.dark .admin-shell .cdk-status.is-expired { border-color: rgb(210 83 94 / 40%) !important; background: rgb(190 61 73 / 14%) !important; color: #f09ba4 !important; }
+
+.dark .el-dialog,
+.dark .el-message-box,
+.dark .el-drawer,
+.dark .el-popper,
+.dark .el-select-dropdown,
+.dark .el-picker-panel { border-color: #343d46; background: #1b2127; color: #dce2e7; }
+.dark .el-overlay { background: rgb(0 0 0 / 62%); }
+.dark button:focus-visible,
+.dark a:focus-visible,
+.dark input:focus-visible,
+.dark select:focus-visible,
+.dark summary:focus-visible,
+.dark [tabindex]:focus-visible { outline-color: #8b9afa; }
+
+@media (max-width: 760px) {
+  .admin-login-theme { top: 12px; right: 12px; }
+  .dark .admin-shell :where(.channel-metrics > div:nth-child(3), .channel-metrics > div:nth-child(4), .user-metrics > div:nth-child(3), .user-metrics > div:nth-child(4), .user-metrics > div:nth-child(5), .points-metrics > div:nth-child(3), .points-metrics > div:nth-child(4), .generation-metrics > div:nth-child(3), .generation-metrics > div:nth-child(4), .generation-metrics > div:nth-child(5)) { border-color: #2d353e; }
+}
+
 .admin-header__spacer { flex: 1; }
 .admin-shell.admin-shell :where(p, span, small, strong, label, input, button, td, th, dt, dd, time, code, em),
 .admin-login-page.admin-login-page :where(p, span, small, strong, label, input, button) { font-size: max(11px, 0.875em); }

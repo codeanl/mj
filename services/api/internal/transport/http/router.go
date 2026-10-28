@@ -18,6 +18,7 @@ import (
 	"nova-creator-platform/services/api/internal/adminusers"
 	"nova-creator-platform/services/api/internal/assets"
 	"nova-creator-platform/services/api/internal/auth"
+	"nova-creator-platform/services/api/internal/cdk"
 	"nova-creator-platform/services/api/internal/config"
 	"nova-creator-platform/services/api/internal/generation"
 	"nova-creator-platform/services/api/internal/modelchannels"
@@ -49,6 +50,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 	channelHTTP := newModelChannelHandlers(channelService, auditService, logger)
 	pointService := points.NewService(points.NewPostgresRepository(db))
 	pointHTTP := newPointHandlers(pointService, auditService, logger)
+	cdkHTTP := newCdkHandlers(cdk.NewService(cdk.NewPostgresRepository(db), cdk.NewSecretCipher(cfg.JWTSecret)), auditService, logger)
 	generationRepository := generation.NewRepository(db)
 	imageProvider := generation.NewOpenAIImageProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
 	videoProvider := generation.NewMiniMaxH3VideoProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
@@ -112,6 +114,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Post("/assets/{id}/download-ticket", assetHTTP.DownloadTicket)
 			protected.Get("/models", channelHTTP.PublicModels)
 			protected.Get("/points", pointHTTP.Wallet)
+			protected.Post("/cdk/redeem", cdkHTTP.Redeem)
 			protected.Get("/generations/capabilities", generationHTTP.GetCapabilities)
 			protected.Post("/generations/images", generationHTTP.CreateImage)
 			protected.Post("/generations/videos", generationHTTP.CreateVideo)
@@ -141,6 +144,10 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 				admin.Post("/admin/generations/{taskId}/review", adminGenerationHTTP.Review)
 				admin.Get("/admin/points/rules", pointHTTP.GetRules)
 				admin.Put("/admin/points/rules", pointHTTP.SaveRules)
+				admin.Get("/admin/cdk", cdkHTTP.List)
+				admin.Post("/admin/cdk", cdkHTTP.Generate)
+				admin.Delete("/admin/cdk/{id}", cdkHTTP.Delete)
+				admin.Post("/admin/cdk/batch-delete", cdkHTTP.BulkDelete)
 				admin.Get("/admin/channels", channelHTTP.List)
 				admin.Get("/admin/channels/simulate", channelHTTP.Simulate)
 				admin.Get("/admin/channels/stats", channelHTTP.Stats)

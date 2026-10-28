@@ -776,6 +776,30 @@ a {
   gap: 14px;
 }
 
+.profile-cdk-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.profile-cdk-form label {
+  display: grid;
+  gap: 8px;
+  color: #4c545e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.profile-cdk-form input {
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.profile-section--cdk .profile-section__heading > svg {
+  color: #c89b27;
+}
+
 .profile-form label,
 .profile-password-form label,
 .profile-deletion-form label {
@@ -1295,6 +1319,7 @@ a {
 }
 
 .app-shell--dark .profile-form label,
+.app-shell--dark .profile-cdk-form label,
 .app-shell--dark .profile-password-form label,
 .app-shell--dark .profile-deletion-form label,
 .app-shell--dark .profile-sessions strong {
@@ -2403,6 +2428,8 @@ a {
   .profile-button { min-height: 36px; padding: 0 11px; font-size: 12px; }
   .profile-form { grid-template-columns: 1fr; }
   .profile-form > .profile-button { justify-self: start; }
+  .profile-cdk-form { grid-template-columns: 1fr; }
+  .profile-cdk-form > .profile-button { justify-self: start; }
   .profile-password-form { grid-template-columns: 1fr; }
   .profile-deletion-form,
   .profile-deletion-pending { grid-template-columns: 1fr; align-items: stretch; }

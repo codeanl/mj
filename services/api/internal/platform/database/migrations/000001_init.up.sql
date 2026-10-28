@@ -168,6 +168,39 @@ CREATE TABLE IF NOT EXISTS point_transactions (
 
 CREATE INDEX IF NOT EXISTS point_transactions_user_created_idx ON point_transactions (user_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS cdk_codes (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    code_hash text NOT NULL UNIQUE,
+    code_ciphertext text NOT NULL,
+    code_preview text NOT NULL,
+    points numeric(18,2) NOT NULL,
+    max_redemptions integer NOT NULL DEFAULT 1,
+    redeemed_count integer NOT NULL DEFAULT 0,
+    status text NOT NULL DEFAULT 'active',
+    note text NOT NULL DEFAULT '',
+    expires_at timestamptz,
+    created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT cdk_codes_points_check CHECK (points > 0),
+    CONSTRAINT cdk_codes_redemptions_check CHECK (max_redemptions > 0 AND redeemed_count >= 0 AND redeemed_count <= max_redemptions),
+    CONSTRAINT cdk_codes_status_check CHECK (status IN ('active', 'disabled'))
+);
+CREATE INDEX IF NOT EXISTS cdk_codes_created_idx ON cdk_codes (created_at DESC);
+CREATE INDEX IF NOT EXISTS cdk_codes_expires_idx ON cdk_codes (expires_at) WHERE expires_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS cdk_redemptions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    cdk_code_id uuid NOT NULL REFERENCES cdk_codes(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    points numeric(18,2) NOT NULL,
+    balance_after numeric(18,2) NOT NULL,
+    redeemed_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (cdk_code_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS cdk_redemptions_code_created_idx ON cdk_redemptions (cdk_code_id, redeemed_at DESC);
+CREATE INDEX IF NOT EXISTS cdk_redemptions_user_created_idx ON cdk_redemptions (user_id, redeemed_at DESC);
+
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_cost numeric(18,2) NOT NULL DEFAULT 0;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_transaction_id uuid REFERENCES point_transactions(id) ON DELETE SET NULL;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS points_refunded boolean NOT NULL DEFAULT false;

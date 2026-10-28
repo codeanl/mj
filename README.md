@@ -115,6 +115,9 @@ scripts\package-desktop.cmd https://api.example.com
 - `GET /api/v1/points`：读取当前用户积分余额和最近积分流水。
 - `GET/PUT /api/v1/admin/points/rules`：读取或保存初始积分、默认模型成本、单模型成本及图片/视频参数倍率。
 - `POST /api/v1/admin/users/{accountId}/points`：管理员按正负数调整用户积分并记录原因。
+- `GET/POST /api/v1/admin/cdk`：分页查询或批量生成积分 CDK；密钥使用哈希查找并加密保存。
+- `DELETE /api/v1/admin/cdk/{id}`、`POST /api/v1/admin/cdk/batch-delete`：删除单个或批量 CDK，已产生的积分流水继续保留。
+- `POST /api/v1/cdk/redeem`：当前用户兑换 CDK；同一账号不可重复兑换，积分与兑换次数在同一事务内更新。
 
 图片任务创建时在同一数据库事务中预扣积分、创建素材和生成任务；余额不足返回 HTTP 402。Worker 失败时在失败事务中原子退款，`generation-refund:{taskId}` 幂等键保证只退一次。客户端侧边栏和移动端顶部展示当前余额，并在创建任务或失败退款后刷新。
 

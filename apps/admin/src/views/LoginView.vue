@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { useRouter } from "vue-router"
-import { ArrowRight, LockKeyhole, Mail } from "@lucide/vue"
+import { ArrowRight, LockKeyhole, Mail, Moon, Sun } from "@lucide/vue"
 
 import BrandMark from "@/components/BrandMark.vue"
 import { useAdminAuthStore } from "@/stores/auth"
+import { useAdminThemeStore } from "@/stores/theme"
 
 const auth = useAdminAuthStore()
+const theme = useAdminThemeStore()
 const router = useRouter()
 const email = ref("")
 const password = ref("")
@@ -30,6 +32,7 @@ async function submit() {
 
 <template>
   <main class="admin-login-page">
+    <button class="icon-button admin-login-theme" type="button" :title="theme.isDark ? '切换至浅色模式' : '切换至暗色模式'" :aria-label="theme.isDark ? '切换至浅色模式' : '切换至暗色模式'" @click="theme.toggle()"><Sun v-if="theme.isDark" :size="18" /><Moon v-else :size="18" /></button>
     <form class="admin-login-panel" @submit.prevent="submit">
       <div class="admin-login-brand"><BrandMark /><span><strong>NOVA</strong><small>管理控制台</small></span></div>
       <p>ADMIN CONSOLE</p>
