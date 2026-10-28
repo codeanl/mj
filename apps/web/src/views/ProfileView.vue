@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
-import { useRouter } from "vue-router"
-import { AlertTriangle, ArrowRight, Boxes, Camera, Check, KeyRound, LoaderCircle, MonitorSmartphone, ShieldCheck, Sparkles, Trash2, UserRound } from "@lucide/vue"
+import { AlertTriangle, Camera, Check, KeyRound, LoaderCircle, MonitorSmartphone, ShieldCheck, Trash2, UserRound } from "@lucide/vue"
 
 import UserAvatar from "@/components/UserAvatar.vue"
 import { apiErrorMessage } from "@/services/http"
@@ -10,7 +9,6 @@ import { useAuthStore } from "@/stores/auth"
 import * as authApi from "@/services/auth"
 
 const authStore = useAuthStore()
-const router = useRouter()
 const username = ref(authStore.user?.username || "")
 const avatarInput = ref<HTMLInputElement | null>(null)
 const previewUrl = ref("")
@@ -252,10 +250,6 @@ onMounted(() => void Promise.all([loadSessions(), loadDeletionRequest()]))
           <button v-if="authStore.user?.avatarUrl || selectedAvatar" class="profile-button profile-button--danger" type="button" :disabled="removingAvatar" @click="removeAvatar"><LoaderCircle v-if="removingAvatar" class="spin" :size="16" /><Trash2 v-else :size="16" />移除</button>
         </div>
 
-        <nav class="profile-overview__links" aria-label="个人中心快捷入口">
-          <button type="button" @click="router.push('/assets')"><Boxes :size="17" /><span><strong>我的素材</strong><small>查看和管理创作内容</small></span><ArrowRight :size="16" /></button>
-          <button type="button" @click="router.push('/')"><Sparkles :size="17" /><span><strong>开始创作</strong><small>生成新的图片或视频</small></span><ArrowRight :size="16" /></button>
-        </nav>
       </aside>
 
       <div class="profile-details">

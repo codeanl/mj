@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue"
-import { ElButton, ElDialog, ElDrawer, ElInput, ElMessage, ElMessageBox, ElOption, ElPagination, ElSelect } from "element-plus"
-import "element-plus/dist/index.css"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { ElButton, ElDialog, ElDrawer, ElInput, ElMessage, ElMessageBox, ElOption, ElSelect } from "element-plus"
+import "element-plus/es/components/button/style/css"
+import "element-plus/es/components/dialog/style/css"
+import "element-plus/es/components/drawer/style/css"
+import "element-plus/es/components/input/style/css"
+import "element-plus/es/components/message/style/css"
+import "element-plus/es/components/message-box/style/css"
+import "element-plus/es/components/option/style/css"
+import "element-plus/es/components/select/style/css"
 import { Ban, CircleAlert, Clock3, Coins, Eye, Image, LoaderCircle, RefreshCcw, RotateCcw, Search, Video } from "@lucide/vue"
 
+import GenerationThumbnail from "@/components/GenerationThumbnail.vue"
 import * as generationApi from "@/services/generations"
 
 const tasks = ref<generationApi.AdminGenerationTask[]>([])
@@ -15,22 +23,25 @@ const searchDraft = ref("")
 const search = ref("")
 const statusFilter = ref<generationApi.GenerationStatus | "">("")
 const kindFilter = ref<generationApi.GenerationKind | "">("")
+const windowFilter = ref<"24h" | "7d" | "30d" | "all">("7d")
+const cursorHistory = ref<string[]>([""])
+const nextCursor = ref("")
 const loading = ref(true)
 const actingTaskId = ref("")
 const detailOpen = ref(false)
 const selectedTask = ref<generationApi.AdminGenerationTask | null>(null)
 const imagePreviewOpen = ref(false)
 const previewTask = ref<generationApi.AdminGenerationTask | null>(null)
+const previewImageUrl = ref("")
+const previewLoading = ref(false)
 const reviewOpen=ref(false);const reviewAction=ref<"confirm_failed"|"provide_result">("confirm_failed");const reviewValue=ref("")
-const previewUrls = ref<Record<string, string>>({})
-const previewSignatures = ref<Record<string, string>>({})
 let loadSequence = 0
 
 const successRate = computed(() => summary.value.total ? Math.round(summary.value.succeeded / summary.value.total * 100) : 0)
-const previewImageUrl = computed(() => previewTask.value ? previewUrls.value[previewTask.value.taskId] || "" : "")
 
 onMounted(() => void loadTasks())
-onBeforeUnmount(() => revokePreviews())
+onBeforeUnmount(() => revokePreview())
+watch(imagePreviewOpen, (open) => { if (!open) revokePreview() })
 
 async function loadTasks() {
   const sequence = ++loadSequence
@@ -39,12 +50,13 @@ async function loadTasks() {
     const result = await generationApi.listGenerations({
       page: page.value, pageSize: pageSize.value, search: search.value,
       status: statusFilter.value || undefined, type: kindFilter.value || undefined,
+      window: windowFilter.value, cursor: cursorHistory.value[page.value - 1],
     })
     if (sequence !== loadSequence) return
 	tasks.value = result.items
 	total.value = result.total
 	summary.value = result.summary
-	void loadPreviews(result.items, sequence)
+	nextCursor.value = result.nextCursor || ""
   } catch (error) {
     if (sequence === loadSequence) ElMessage.error(messageOf(error, "任务加载失败"))
   } finally {
@@ -52,47 +64,44 @@ async function loadTasks() {
   }
 }
 
-async function loadPreviews(items: generationApi.AdminGenerationTask[], sequence: number) {
-	const currentUrls = previewUrls.value
-	const currentSignatures = previewSignatures.value
-	const entries = await Promise.all(items.map(async (task) => {
-	  const signature = `${task.status}:${task.assetId}`
-	  if (task.status !== "succeeded" || task.type !== "image") return { id: task.taskId, url: "", signature, created: false }
-	  if (currentUrls[task.taskId] && currentSignatures[task.taskId] === signature) return { id: task.taskId, url: currentUrls[task.taskId], signature, created: false }
-	  try {
-		const blob = await generationApi.getGenerationPreview(task.taskId)
-		return { id: task.taskId, url: URL.createObjectURL(blob), signature, created: true }
-	  } catch {
-		return { id: task.taskId, url: "", signature: "", created: false }
-	  }
-	}))
-	if (sequence !== loadSequence) {
-	  entries.forEach((entry) => entry.created && entry.url && URL.revokeObjectURL(entry.url))
-	  return
-	}
-	const nextUrls = Object.fromEntries(entries.map((entry) => [entry.id, entry.url]))
-	const nextSignatures = Object.fromEntries(entries.map((entry) => [entry.id, entry.signature]))
-	Object.entries(currentUrls).forEach(([id, url]) => {
-	  if (url && nextUrls[id] !== url) URL.revokeObjectURL(url)
-	})
-	previewUrls.value = nextUrls
-	previewSignatures.value = nextSignatures
-}
-
-function revokePreviews() {
-	Object.values(previewUrls.value).forEach((url) => url && URL.revokeObjectURL(url))
-	previewUrls.value = {}
-	previewSignatures.value = {}
+function revokePreview() {
+	if (previewImageUrl.value) URL.revokeObjectURL(previewImageUrl.value)
+	previewImageUrl.value = ""
 }
 
 function submitSearch() {
   search.value = searchDraft.value.trim()
-  page.value = 1
+  resetPagination()
   void loadTasks()
 }
 
 function applyFilters() {
+  resetPagination()
+  void loadTasks()
+}
+
+function resetPagination() {
   page.value = 1
+  cursorHistory.value = [""]
+  nextCursor.value = ""
+}
+
+function goToPreviousPage() {
+  if (page.value <= 1) return
+  page.value -= 1
+  void loadTasks()
+}
+
+function goToNextPage() {
+  if (!nextCursor.value) return
+  cursorHistory.value[page.value] = nextCursor.value
+  page.value += 1
+  void loadTasks()
+}
+
+function changePageSize(value: number) {
+  pageSize.value = value
+  resetPagination()
   void loadTasks()
 }
 
@@ -106,10 +115,19 @@ async function openDetail(task: generationApi.AdminGenerationTask) {
   }
 }
 
-function openImagePreview(task: generationApi.AdminGenerationTask) {
-	if (!previewUrls.value[task.taskId]) return
+async function openImagePreview(task: generationApi.AdminGenerationTask) {
+	if (task.status !== "succeeded" || task.type !== "image") return
+	revokePreview()
 	previewTask.value = task
 	imagePreviewOpen.value = true
+	previewLoading.value = true
+	try {
+		previewImageUrl.value = URL.createObjectURL(await generationApi.getGenerationPreview(task.taskId))
+	} catch (error) {
+		ElMessage.error(messageOf(error, "原图预览加载失败"))
+	} finally {
+		previewLoading.value = false
+	}
 }
 
 async function checkReviewTask(task:generationApi.AdminGenerationTask){actingTaskId.value=task.taskId;try{selectedTask.value=await generationApi.checkGeneration(task.taskId);await loadTasks();ElMessage.info(selectedTask.value.status==="succeeded"?"任务已完成":"上游仍在处理中")}catch(error){ElMessage.error(messageOf(error,"状态检查失败"))}finally{actingTaskId.value=""}}
@@ -165,6 +183,7 @@ function messageOf(error: unknown, fallback: string) { return error instanceof E
       <form class="generation-search" @submit.prevent="submitSearch"><Search :size="16" /><input v-model="searchDraft" placeholder="任务 ID、用户、账号 ID、模型或渠道" /><button type="submit">搜索</button></form>
 	  <ElSelect v-model="statusFilter" aria-label="状态筛选" placeholder="全部状态" @change="applyFilters"><ElOption label="全部状态" value="" /><ElOption label="排队中" value="queued" /><ElOption label="生成中" value="running" /><ElOption label="待确认" value="needs_review" /><ElOption label="已完成" value="succeeded" /><ElOption label="失败" value="failed" /><ElOption label="已取消" value="cancelled" /></ElSelect>
       <ElSelect v-model="kindFilter" aria-label="类型筛选" placeholder="全部类型" @change="applyFilters"><ElOption label="全部类型" value="" /><ElOption label="图片" value="image" /><ElOption label="视频" value="video" /></ElSelect>
+      <ElSelect v-model="windowFilter" aria-label="时间范围" @change="applyFilters"><ElOption label="最近 24 小时" value="24h" /><ElOption label="最近 7 天" value="7d" /><ElOption label="最近 30 天" value="30d" /><ElOption label="全部时间" value="all" /></ElSelect>
       <button class="generation-refresh" type="button" :disabled="loading" @click="loadTasks"><RefreshCcw :class="{ spin: loading }" :size="16" />刷新</button>
     </div>
 
@@ -173,7 +192,7 @@ function messageOf(error: unknown, fallback: string) { return error instanceof E
       <table class="generation-table">
         <thead><tr><th>任务</th><th>用户</th><th>渠道 / 模型</th><th>参数</th><th>状态</th><th>积分</th><th>时间</th><th>操作</th></tr></thead>
         <tbody><tr v-for="task in tasks" :key="task.taskId">
-		  <td><span class="generation-task-id"><button class="generation-task-thumb" type="button" :disabled="!previewUrls[task.taskId]" :title="previewUrls[task.taskId] ? '查看生成图片' : undefined" @click="openImagePreview(task)"><img v-if="previewUrls[task.taskId]" :src="previewUrls[task.taskId]" :alt="task.prompt" /><component :is="task.type === 'image' ? Image : Video" v-else :size="16" /></button><span><strong>{{ shortTask(task.taskId) }}</strong><small>{{ kindLabel(task.type) }} · 重试 {{ task.retryCount }} 次</small></span></span></td>
+          <td><span class="generation-task-id"><button class="generation-task-thumb" type="button" :disabled="task.status !== 'succeeded' || task.type !== 'image'" :title="task.status === 'succeeded' && task.type === 'image' ? '查看生成图片' : undefined" @click="openImagePreview(task)"><GenerationThumbnail v-if="task.status === 'succeeded' && (task.type === 'image' || task.type === 'video')" :task-id="task.taskId" :kind="task.type" :alt="task.prompt" /><component :is="task.type === 'image' ? Image : Video" v-else :size="16" /></button><span><strong>{{ shortTask(task.taskId) }}</strong><small>{{ kindLabel(task.type) }} · 重试 {{ task.retryCount }} 次</small></span></span></td>
           <td><span class="generation-user"><strong>{{ task.username }}</strong><small>{{ accountLabel(task.accountId) }} · {{ task.email }}</small></span></td>
           <td><span class="generation-channel"><strong>{{ task.channelName || "渠道已删除" }}</strong><small>{{ task.model }}</small></span></td>
           <td><span>{{ task.size || "-" }} · {{ task.quality || "-" }}</span><small v-if="task.referenceCount">{{ task.referenceCount }} 张参考图</small></td>
@@ -185,9 +204,9 @@ function messageOf(error: unknown, fallback: string) { return error instanceof E
       </table>
     </div>
 
-	<div v-if="!loading && tasks.length" class="generation-mobile-list"><article v-for="task in tasks" :key="task.taskId"><div><span class="generation-task-id"><button class="generation-task-thumb" type="button" :disabled="!previewUrls[task.taskId]" :title="previewUrls[task.taskId] ? '查看生成图片' : undefined" @click="openImagePreview(task)"><img v-if="previewUrls[task.taskId]" :src="previewUrls[task.taskId]" :alt="task.prompt" /><component :is="task.type === 'image' ? Image : Video" v-else :size="16" /></button><strong>{{ shortTask(task.taskId) }}</strong></span><span class="generation-status" :class="`is-${task.status}`">{{ statusLabel(task.status) }}</span></div><strong>{{ task.username }} · {{ accountLabel(task.accountId) }}</strong><span>{{ task.channelName || "渠道已删除" }} · {{ task.model }}</span><small>{{ task.size || "-" }} · {{ task.quality || "-" }} · {{ formatPoints(task.pointsCost) }} 积分 · {{ formatDate(task.createdAt) }}</small><button type="button" @click="openDetail(task)"><Eye :size="15" />查看详情</button></article></div>
+	<div v-if="!loading && tasks.length" class="generation-mobile-list"><article v-for="task in tasks" :key="task.taskId"><div><span class="generation-task-id"><button class="generation-task-thumb" type="button" :disabled="task.status !== 'succeeded' || task.type !== 'image'" :title="task.status === 'succeeded' && task.type === 'image' ? '查看生成图片' : undefined" @click="openImagePreview(task)"><GenerationThumbnail v-if="task.status === 'succeeded' && (task.type === 'image' || task.type === 'video')" :task-id="task.taskId" :kind="task.type" :alt="task.prompt" /><component :is="task.type === 'image' ? Image : Video" v-else :size="16" /></button><strong>{{ shortTask(task.taskId) }}</strong></span><span class="generation-status" :class="`is-${task.status}`">{{ statusLabel(task.status) }}</span></div><strong>{{ task.username }} · {{ accountLabel(task.accountId) }}</strong><span>{{ task.channelName || "渠道已删除" }} · {{ task.model }}</span><small>{{ task.size || "-" }} · {{ task.quality || "-" }} · {{ formatPoints(task.pointsCost) }} 积分 · {{ formatDate(task.createdAt) }}</small><button type="button" @click="openDetail(task)"><Eye :size="15" />查看详情</button></article></div>
     <div v-if="!loading && !tasks.length" class="generation-empty"><Clock3 :size="30" /><strong>没有找到生成任务</strong><span>调整搜索或筛选条件后再试。</span></div>
-    <footer v-if="total" class="generation-pagination"><span>共 {{ total }} 个任务</span><ElPagination background layout="prev, pager, next" :current-page="page" :page-size="pageSize" :total="total" @current-change="(value: number) => { page = value; loadTasks() }" /><ElSelect :model-value="pageSize" aria-label="每页数量" @change="(value: number) => { pageSize = value; page = 1; loadTasks() }"><ElOption label="20 条/页" :value="20" /><ElOption label="50 条/页" :value="50" /></ElSelect></footer>
+    <footer v-if="total" class="generation-pagination"><span>共 {{ total }} 个任务</span><div class="generation-cursor-pagination"><button type="button" :disabled="page <= 1" @click="goToPreviousPage">上一页</button><strong>第 {{ page }} 页</strong><button type="button" :disabled="!nextCursor" @click="goToNextPage">下一页</button></div><ElSelect :model-value="pageSize" aria-label="每页数量" @change="changePageSize"><ElOption label="20 条/页" :value="20" /><ElOption label="50 条/页" :value="50" /></ElSelect></footer>
 
 	<ElDrawer v-model="detailOpen" title="任务详情" size="min(560px, 100vw)" append-to-body>
       <div v-if="selectedTask" class="generation-detail">
@@ -203,7 +222,8 @@ function messageOf(error: unknown, fallback: string) { return error instanceof E
 	</ElDrawer>
 
 	<ElDialog v-model="imagePreviewOpen" class="generation-image-preview" :title="previewTask ? `图片预览 · ${shortTask(previewTask.taskId)}` : '图片预览'" width="min(920px, calc(100vw - 28px))" append-to-body destroy-on-close>
-	  <div v-if="previewTask && previewImageUrl" class="generation-image-preview__body">
+	  <div v-if="previewLoading" class="generation-image-preview__body"><LoaderCircle class="spin" :size="24" />正在加载原图</div>
+	  <div v-else-if="previewTask && previewImageUrl" class="generation-image-preview__body">
 		<img :src="previewImageUrl" :alt="previewTask.prompt" />
 		<div><strong>{{ previewTask.username }} · {{ accountLabel(previewTask.accountId) }}</strong><span>{{ previewTask.model }} · {{ previewTask.width }}×{{ previewTask.height }}</span></div>
 	  </div>

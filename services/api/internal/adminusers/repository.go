@@ -95,14 +95,25 @@ func (repository *PostgresRepository) Update(ctx context.Context, accountID int6
 }
 
 func (repository *PostgresRepository) UpdatePassword(ctx context.Context, accountID int64, passwordHash string) error {
-	result, err := repository.pool.Exec(ctx, `UPDATE users SET password_hash = $2, updated_at = now() WHERE public_id = $1`, accountID, passwordHash)
+	tx, err := repository.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	var userID string
+	if err := tx.QueryRow(ctx, `
+		UPDATE users SET password_hash = $2, updated_at = now()
+		WHERE public_id = $1
+		RETURNING id::text
+	`, accountID, passwordHash).Scan(&userID); errors.Is(err, pgx.ErrNoRows) {
 		return ErrUserNotFound
+	} else if err != nil {
+		return err
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `UPDATE user_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (repository *PostgresRepository) CountActiveAdmins(ctx context.Context) (int64, error) {

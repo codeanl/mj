@@ -53,6 +53,7 @@ type PublicModel struct {
 	DisplayName      string                `json:"displayName"`
 	Capability       string                `json:"capability"`
 	CapabilityConfig ModelCapabilityConfig `json:"capabilityConfig"`
+	protocol         string
 }
 
 type ModelCapabilityConfig struct {

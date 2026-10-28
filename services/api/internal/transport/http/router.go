@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"nova-creator-platform/services/api/internal/adminaudit"
+	"nova-creator-platform/services/api/internal/admindashboard"
 	"nova-creator-platform/services/api/internal/admingenerations"
 	"nova-creator-platform/services/api/internal/adminusers"
 	"nova-creator-platform/services/api/internal/assets"
@@ -30,7 +32,10 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 	assetStorage.ConfigureFFmpeg(cfg.FFmpegPath)
 	authService := auth.NewService(auth.NewPostgresRepository(db), auth.NewTokenManager(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTAccessTTL), assetStorage)
 	authHTTP := newAuthHandlers(authService, logger, cfg.AssetMaxBytes)
-	adminUserHTTP := newAdminUserHandlers(adminusers.NewService(adminusers.NewPostgresRepository(db)), logger)
+	auditService := adminaudit.NewService(adminaudit.NewRepository(db))
+	auditHTTP := newAdminAuditHandlers(auditService, logger)
+	dashboardHTTP := newAdminDashboardHandlers(admindashboard.NewService(admindashboard.NewRepository(db)), auditService, logger)
+	adminUserHTTP := newAdminUserHandlers(adminusers.NewService(adminusers.NewPostgresRepository(db)), auditService, logger)
 	assetService := assets.NewService(assets.NewPostgresRepository(db), assetStorage)
 	assetHTTP := newAssetHandlers(assetService, assets.NewDownloadTokenManager(cfg.JWTSecret, cfg.JWTIssuer, cfg.AssetDownloadTTL), logger, cfg.AssetMaxBytes)
 	adminGenerationService := admingenerations.NewService(admingenerations.NewRepository(db))
@@ -41,14 +46,14 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			panic(err)
 		}
 	}
-	channelHTTP := newModelChannelHandlers(channelService, logger)
+	channelHTTP := newModelChannelHandlers(channelService, auditService, logger)
 	pointService := points.NewService(points.NewPostgresRepository(db))
-	pointHTTP := newPointHandlers(pointService, logger)
+	pointHTTP := newPointHandlers(pointService, auditService, logger)
 	generationRepository := generation.NewRepository(db)
 	imageProvider := generation.NewOpenAIImageProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
 	videoProvider := generation.NewMiniMaxH3VideoProvider(cfg.GenerationTimeout, cfg.AssetMaxBytes)
 	recoveryService := generation.NewRecoveryService(generationRepository, imageProvider, videoProvider, channelService, assetStorage)
-	adminGenerationHTTP := newAdminGenerationHandlers(adminGenerationService, assetService, recoveryService, logger)
+	adminGenerationHTTP := newAdminGenerationHandlers(adminGenerationService, assetService, recoveryService, auditService, logger)
 	generationService := generation.NewService(generationRepository, channelService, pointService)
 	generationHTTP := newGenerationHandlers(generationService, adminGenerationService, recoveryService, logger)
 	if db != nil {
@@ -117,6 +122,9 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 
 			protected.Group(func(admin chi.Router) {
 				admin.Use(authHTTP.RequireAdmin)
+				admin.Use(adminFailureAudit(auditService, logger))
+				admin.Get("/admin/dashboard", dashboardHTTP.Get)
+				admin.Get("/admin/audit", auditHTTP.List)
 				admin.Get("/admin/protocols", channelHTTP.Protocols)
 				admin.Get("/admin/users", adminUserHTTP.List)
 				admin.Post("/admin/users", adminUserHTTP.Create)

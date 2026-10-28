@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -44,9 +45,8 @@ func NewRepository(pool *pgxpool.Pool) *Repository {
 }
 
 func (repository *Repository) List(ctx context.Context, input ListInput) (Page, error) {
-	offset := (input.Page - 1) * input.PageSize
 	rows, err := repository.pool.Query(ctx, `
-		SELECT `+taskColumns+`, count(*) OVER()
+		SELECT `+taskColumns+`
 		FROM generation_tasks t
 		JOIN users u ON u.id = t.user_id
 		LEFT JOIN model_channels c ON c.id = t.channel_id
@@ -54,18 +54,19 @@ func (repository *Repository) List(ctx context.Context, input ListInput) (Page, 
 		  AND ($2::bigint IS NULL OR u.public_id = $2::bigint)
 		  AND ($3 = '' OR t.status = $3)
 		  AND ($4 = '' OR t.kind = $4)
+		  AND ($5::timestamptz IS NULL OR t.created_at >= $5::timestamptz)
+		  AND ($6::timestamptz IS NULL OR (t.created_at, t.id) < ($6::timestamptz, $7::uuid))
 		ORDER BY t.created_at DESC, t.id DESC
-		LIMIT $5 OFFSET $6
-	`, input.Search, input.AccountID, input.Status, input.Kind, input.PageSize, offset)
+		LIMIT $8
+	`, input.Search, input.AccountID, input.Status, input.Kind, input.Since, input.CursorAt, input.CursorID, input.PageSize+1)
 	if err != nil {
 		return Page{}, err
 	}
 	defer rows.Close()
-	items := make([]Task, 0, input.PageSize)
-	var total int64
+	items := make([]Task, 0, input.PageSize+1)
 	for rows.Next() {
 		var task Task
-		if err := scanTask(rows, &task, &total); err != nil {
+		if err := scanTask(rows, &task); err != nil {
 			return Page{}, err
 		}
 		items = append(items, task)
@@ -73,14 +74,34 @@ func (repository *Repository) List(ctx context.Context, input ListInput) (Page, 
 	if err := rows.Err(); err != nil {
 		return Page{}, err
 	}
-	summary, err := repository.summary(ctx)
+	var total int64
+	err = repository.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM generation_tasks t
+		JOIN users u ON u.id = t.user_id
+		LEFT JOIN model_channels c ON c.id = t.channel_id
+		WHERE ($1 = '' OR t.id::text ILIKE '%' || $1 || '%' OR t.prompt ILIKE '%' || $1 || '%' OR t.model ILIKE '%' || $1 || '%' OR u.username ILIKE '%' || $1 || '%' OR u.email ILIKE '%' || $1 || '%' OR c.name ILIKE '%' || $1 || '%')
+		  AND ($2::bigint IS NULL OR u.public_id = $2::bigint)
+		  AND ($3 = '' OR t.status = $3)
+		  AND ($4 = '' OR t.kind = $4)
+		  AND ($5::timestamptz IS NULL OR t.created_at >= $5::timestamptz)
+	`, input.Search, input.AccountID, input.Status, input.Kind, input.Since).Scan(&total)
 	if err != nil {
 		return Page{}, err
 	}
-	return Page{Items: items, Total: total, Page: input.Page, PageSize: input.PageSize, Summary: summary}, nil
+	nextCursor := ""
+	if len(items) > input.PageSize {
+		items = items[:input.PageSize]
+		nextCursor = encodeCursor(items[len(items)-1])
+	}
+	summary, err := repository.summary(ctx, input.Since)
+	if err != nil {
+		return Page{}, err
+	}
+	return Page{Items: items, Total: total, Page: input.Page, PageSize: input.PageSize, NextCursor: nextCursor, Summary: summary}, nil
 }
 
-func (repository *Repository) summary(ctx context.Context) (Summary, error) {
+func (repository *Repository) summary(ctx context.Context, since *time.Time) (Summary, error) {
 	var summary Summary
 	err := repository.pool.QueryRow(ctx, `
 		SELECT count(*),
@@ -89,7 +110,8 @@ func (repository *Repository) summary(ctx context.Context) (Summary, error) {
 		       count(*) FILTER (WHERE status = 'cancelled'),count(*) FILTER (WHERE status = 'needs_review'),
 		       coalesce(sum(points_cost) FILTER (WHERE NOT points_refunded), 0)
 		FROM generation_tasks
-	`).Scan(&summary.Total, &summary.Queued, &summary.Running, &summary.Succeeded, &summary.Failed, &summary.Cancelled, &summary.NeedsReview, &summary.PointsSpent)
+		WHERE ($1::timestamptz IS NULL OR created_at >= $1::timestamptz)
+	`, since).Scan(&summary.Total, &summary.Queued, &summary.Running, &summary.Succeeded, &summary.Failed, &summary.Cancelled, &summary.NeedsReview, &summary.PointsSpent)
 	return summary, err
 }
 

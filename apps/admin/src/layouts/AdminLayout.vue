@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
-import { useRoute, useRouter } from "vue-router"
+import { ref } from "vue"
+import { useRouter } from "vue-router"
 import {
 	Activity,
-  Bell,
   Bot,
   ChevronLeft,
   CircleDollarSign,
   Menu,
+  LayoutDashboard,
   LogOut,
-  Search,
-  ShieldCheck,
+  ScrollText,
   UsersRound,
   X,
 } from "@lucide/vue"
@@ -18,24 +17,24 @@ import {
 import BrandMark from "@/components/BrandMark.vue"
 import { useAdminAuthStore } from "@/stores/auth"
 
-const route = useRoute()
 const router = useRouter()
 const auth = useAdminAuthStore()
 const mobileOpen = ref(false)
 const collapsed = ref(false)
 
 const groups = [
+  { title: "经营分析", items: [{ label: "经营总览", path: "/dashboard", icon: LayoutDashboard }] },
   { title: "财务管理", items: [{ label: "积分规则", path: "/points", icon: CircleDollarSign }] },
 	{ title: "上游配置", items: [{ label: "模型渠道", path: "/channels", icon: Bot }, { label: "生成任务", path: "/generation", icon: Activity }] },
-  { title: "系统管理", items: [{ label: "用户管理", path: "/users", icon: UsersRound }] },
+  { title: "系统管理", items: [{ label: "用户管理", path: "/users", icon: UsersRound }, { label: "操作审计", path: "/audit", icon: ScrollText }] },
 ]
 
-const title = computed(() => String(route.meta.title || "管理控制台"))
-const description = computed(() => String(route.meta.description || ""))
-
 async function logout() {
-  auth.logout()
-  await router.replace("/login")
+  try {
+    await auth.logout()
+  } finally {
+    await router.replace("/login")
+  }
 }
 </script>
 
@@ -71,15 +70,10 @@ async function logout() {
       <header class="admin-header">
         <button class="icon-button desktop-only" type="button" :aria-label="collapsed ? '展开侧栏' : '收起侧栏'" @click="collapsed = !collapsed"><ChevronLeft :size="18" /></button>
         <button class="icon-button mobile-only" type="button" aria-label="打开菜单" @click="mobileOpen = true"><Menu :size="19" /></button>
-        <div class="admin-header__search"><Search :size="16" /><span>搜索用户、任务或设置</span><kbd>Ctrl K</kbd></div>
-        <button class="icon-button" type="button" aria-label="通知"><Bell :size="18" /></button>
-        <span class="admin-header__status"><ShieldCheck :size="15" /> 系统正常</span>
+        <div class="admin-header__spacer" />
       </header>
 
       <main class="admin-content">
-        <div class="admin-page-heading">
-          <div><p>NOVA CONSOLE</p><h1>{{ title }}</h1><span>{{ description }}</span></div>
-        </div>
         <RouterView />
       </main>
     </div>

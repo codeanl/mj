@@ -19,7 +19,7 @@ async function submit() {
   error.value = ""
   try {
     await auth.login(email.value.trim(), password.value)
-    await router.replace("/channels")
+    await router.replace("/dashboard")
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "登录失败"
   } finally {

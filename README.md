@@ -62,6 +62,20 @@ pnpm dev:desktop
 pnpm package:desktop -- --api-origin https://api.example.com
 ```
 
+也可以使用项目脚本：
+
+```powershell
+.\scripts\package-desktop.ps1 -ApiOrigin https://api.example.com
+```
+
+或双击/命令行运行：
+
+```cmd
+scripts\package-desktop.cmd https://api.example.com
+```
+
+脚本会检查 Node.js 22+ 和 pnpm，并同时生成 NSIS 安装包与 portable 便携版 EXE。
+
 `--api-origin` 必须是没有路径的 HTTP(S) 服务端地址。产物写入 `dist/desktop/`。未传参数时默认连接 `http://127.0.0.1:8080`，仅适合本地测试。
 
 安装后如需临时覆盖服务端地址，可以设置 `NOVA_DESKTOP_API_ORIGIN` 环境变量，或在 EXE 同目录放置 `nova-desktop.json`：

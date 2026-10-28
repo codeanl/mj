@@ -64,16 +64,6 @@ export type AssetDownloadTicket = {
   expiresAt: string
 }
 
-export type AssetStats = {
-  totalCount: number
-  totalBytes: number
-  imageCount: number
-  videoCount: number
-  audioCount: number
-  generatedCount: number
-  uploadedCount: number
-}
-
 export async function listAssets(params: { page: number; pageSize: number; type?: AssetType; source?: AssetSource; status?: AssetStatus; search?: string }) {
   const response = await http.get<ApiResponse<AssetPage>>("/assets", { params })
   return response.data.data
@@ -104,11 +94,6 @@ export async function createAssetDownloadTicket(assetId: string) {
 
 export async function createAssetArchiveTicket(ids: string[]) {
   const response = await http.post<ApiResponse<AssetDownloadTicket>>("/assets/archive-ticket", { ids })
-  return response.data.data
-}
-
-export async function getAssetStats() {
-  const response = await http.get<ApiResponse<AssetStats>>("/assets/stats")
   return response.data.data
 }
 

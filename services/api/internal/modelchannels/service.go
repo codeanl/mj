@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -98,6 +99,12 @@ func (service *Service) List(ctx context.Context) ([]Channel, error) {
 	return channels, nil
 }
 
+func (service *Service) Get(ctx context.Context, id string) (Channel, error) {
+	channel, err := service.repository.Find(ctx, id)
+	decorateChannel(&channel, service.cipher)
+	return channel, err
+}
+
 func (service *Service) Create(ctx context.Context, input ChannelInput) (Channel, error) {
 	input, err := normalizeChannelInput(input)
 	definition, _ := FindProtocolDefinition(input.Protocol)
@@ -157,6 +164,7 @@ func (service *Service) CreateModel(ctx context.Context, channelID string, input
 	if official, ok := officialModelConfig(channel.Protocol, input.ModelID); ok && !input.CapabilityOverride {
 		input.CapabilityConfig = official
 	}
+	input.CapabilityConfig = capabilityConfigForModel(channel.Protocol, input.Capability, input.CapabilityConfig)
 	input, err = normalizeModelInput(input)
 	if err != nil {
 		return Model{}, ErrInvalidModel
@@ -172,6 +180,7 @@ func (service *Service) UpdateModel(ctx context.Context, channelID, id string, i
 	if official, ok := officialModelConfig(channel.Protocol, input.ModelID); ok && !input.CapabilityOverride {
 		input.CapabilityConfig = official
 	}
+	input.CapabilityConfig = capabilityConfigForModel(channel.Protocol, input.Capability, input.CapabilityConfig)
 	input, err = normalizeModelInput(input)
 	if err != nil {
 		return Model{}, ErrInvalidModel
@@ -188,7 +197,15 @@ func (service *Service) PublicModels(ctx context.Context, capability string) ([]
 	if capability != "" && !validCapability(capability) {
 		return nil, ErrInvalidModel
 	}
-	return service.repository.ListPublicModels(ctx, capability)
+	models, err := service.repository.ListPublicModels(ctx, capability)
+	if err != nil {
+		return nil, err
+	}
+	for index := range models {
+		models[index].CapabilityConfig = capabilityConfigForModel(models[index].protocol, models[index].Capability, models[index].CapabilityConfig)
+		models[index].protocol = ""
+	}
+	return models, nil
 }
 
 func (service *Service) ResolveImageModel(ctx context.Context, channelID, modelID string) (ResolvedModel, error) {
@@ -202,6 +219,7 @@ func (service *Service) ResolveModel(ctx context.Context, capability, channelID,
 		}
 		return ResolvedModel{}, err
 	}
+	model.CapabilityConfig = capabilityConfigForModel(channel.Protocol, model.Capability, model.CapabilityConfig)
 	apiKey, err := service.cipher.Decrypt(channel.apiKeyCiphertext)
 	if err != nil {
 		return ResolvedModel{}, err
@@ -237,6 +255,9 @@ func (service *Service) TestConnection(ctx context.Context, id string, persistMo
 		_ = service.repository.SaveTestResult(ctx, id, "failed", message)
 		_ = service.repository.SaveHealthCheck(ctx, id, false, time.Since(startedAt).Milliseconds(), message)
 		return ConnectionResult{Status: "failed", Message: message, DiscoveredModels: []string{}}, nil
+	}
+	for index := range models {
+		models[index].CapabilityConfig = capabilityConfigForModel(channel.Protocol, models[index].Capability, models[index].CapabilityConfig)
 	}
 	_ = service.repository.SaveHealthCheck(ctx, id, true, time.Since(startedAt).Milliseconds(), "")
 	if persistModels && len(models) > 0 {
@@ -355,9 +376,61 @@ func (service *Service) fetchModels(ctx context.Context, channel Channel, apiKey
 		if capability == "" {
 			capability = inferCapability(modelID)
 		}
-		models = append(models, BuiltInModel{ID: modelID, Label: modelID, Capability: capability})
+		models = append(models, BuiltInModel{ID: modelID, Label: modelID, Capability: capability, CapabilityConfig: capabilityConfigForModel(channel.Protocol, capability, ModelCapabilityConfig{})})
 	}
 	return models, nil
+}
+
+func capabilityConfigForModel(protocol, capability string, config ModelCapabilityConfig) ModelCapabilityConfig {
+	if capability != "video" || hasCapabilityConfig(config) {
+		return config
+	}
+	definition, ok := FindProtocolDefinition(protocol)
+	if !ok {
+		return config
+	}
+	for _, builtIn := range definition.BuiltInModels {
+		if builtIn.Capability == capability && hasCapabilityConfig(builtIn.CapabilityConfig) {
+			return builtIn.CapabilityConfig
+		}
+	}
+	operation := definition.Operations[capability]
+	config.Ratios = []string{"adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
+	config.Qualities = []string{"480P", "768P", "1080P", "2K", "4K"}
+	config.MinDuration, config.MaxDuration = durationBounds(operation.DurationRange)
+	config.Modes = []string{"text"}
+	if operation.SupportsReferenceImage {
+		config.Modes = append(config.Modes, "frames")
+	}
+	if operation.SupportsReferenceImage || operation.SupportsReferenceVideo || operation.SupportsReferenceAudio {
+		config.Modes = append(config.Modes, "reference")
+	}
+	config.SupportsSound = true
+	config.SupportsWatermark = true
+	return config
+}
+
+func hasCapabilityConfig(config ModelCapabilityConfig) bool {
+	return len(config.Ratios) > 0 || len(config.Qualities) > 0 || config.MinDuration > 0 || config.MaxDuration > 0 || len(config.Modes) > 0 || config.SupportsSound || config.SupportsWatermark || len(config.ModeOperations) > 0
+}
+
+func durationBounds(value string) (int, int) {
+	values := regexp.MustCompile(`\d+`).FindAllString(value, -1)
+	if len(values) == 0 {
+		return 4, 30
+	}
+	minimum, _ := strconv.Atoi(values[0])
+	maximum := minimum
+	if len(values) > 1 {
+		maximum, _ = strconv.Atoi(values[len(values)-1])
+	}
+	if minimum <= 0 {
+		minimum = 4
+	}
+	if maximum < minimum {
+		maximum = minimum
+	}
+	return minimum, maximum
 }
 
 func normalizeChannelInput(input ChannelInput) (ChannelInput, error) {
@@ -458,6 +531,7 @@ func decorateChannel(channel *Channel, cipher SecretCipher) {
 	if definition, ok := FindProtocolDefinition(channel.Protocol); ok {
 		channel.AdvancedConfig = normalizeAdvancedConfig(channel.AdvancedConfig, definition)
 		for index := range channel.Models {
+			channel.Models[index].CapabilityConfig = capabilityConfigForModel(channel.Protocol, channel.Models[index].Capability, channel.Models[index].CapabilityConfig)
 			if official, exists := officialModelConfig(channel.Protocol, channel.Models[index].ModelID); exists {
 				channel.Models[index].IsBuiltIn = true
 				channel.Models[index].OfficialCapabilityConfig = official

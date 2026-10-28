@@ -58,11 +58,12 @@ type Summary struct {
 }
 
 type Page struct {
-	Items    []Task  `json:"items"`
-	Total    int64   `json:"total"`
-	Page     int     `json:"page"`
-	PageSize int     `json:"pageSize"`
-	Summary  Summary `json:"summary"`
+	Items      []Task  `json:"items"`
+	Total      int64   `json:"total"`
+	Page       int     `json:"page"`
+	PageSize   int     `json:"pageSize"`
+	NextCursor string  `json:"nextCursor,omitempty"`
+	Summary    Summary `json:"summary"`
 }
 
 type ListInput struct {
@@ -72,6 +73,9 @@ type ListInput struct {
 	AccountID *int64
 	Status    string
 	Kind      string
+	Since     *time.Time
+	CursorAt  *time.Time
+	CursorID  *string
 }
 
 type ActionResult struct {

@@ -71,3 +71,21 @@ func TestOfficialModelConfigRequiresVerifiedCapabilityProfile(t *testing.T) {
 		t.Fatal("a built-in model ID without a verified capability profile must remain editable")
 	}
 }
+
+func TestVideoCapabilityDefaultsFillImportedModelsFromProtocol(t *testing.T) {
+	config := capabilityConfigForModel("seedance", "video", ModelCapabilityConfig{})
+	if len(config.Ratios) == 0 || len(config.Qualities) == 0 || len(config.Modes) == 0 || config.MinDuration != 4 || config.MaxDuration != 15 {
+		t.Fatalf("expected seedance defaults, got %#v", config)
+	}
+	config = capabilityConfigForModel("compshare-minimax-h3", "video", ModelCapabilityConfig{})
+	if config.MaxDuration != 30 || len(config.Ratios) != 7 || len(config.Modes) != 3 {
+		t.Fatalf("expected official minimax profile, got %#v", config)
+	}
+}
+
+func TestDurationBoundsParseProtocolRange(t *testing.T) {
+	minimum, maximum := durationBounds("4、6、8 秒")
+	if minimum != 4 || maximum != 8 {
+		t.Fatalf("unexpected duration bounds: %d-%d", minimum, maximum)
+	}
+}

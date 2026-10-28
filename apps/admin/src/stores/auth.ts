@@ -24,7 +24,7 @@ export const useAdminAuthStore = defineStore("admin-auth", {
         if (user.role !== "admin") throw new Error("需要管理员权限")
         this.user = user
       } catch {
-        this.logout()
+        this.clearSession()
       } finally {
         this.initialized = true
       }
@@ -37,11 +37,18 @@ export const useAdminAuthStore = defineStore("admin-auth", {
       this.initialized = true
       localStorage.setItem(ADMIN_ACCESS_TOKEN_KEY, result.accessToken)
     },
-    logout() {
+    clearSession() {
       this.token = ""
       this.user = null
       this.initialized = true
       localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+    },
+    async logout() {
+      try {
+        if (this.token) await authApi.logout()
+      } finally {
+        this.clearSession()
+      }
     },
   },
 })

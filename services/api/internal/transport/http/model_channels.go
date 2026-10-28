@@ -1,20 +1,23 @@
 package httptransport
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 
+	"nova-creator-platform/services/api/internal/adminaudit"
 	"nova-creator-platform/services/api/internal/modelchannels"
 )
 
 type modelChannelHandlers struct {
 	service *modelchannels.Service
+	audit   *adminaudit.Service
 	logger  *slog.Logger
 }
 
-func newModelChannelHandlers(service *modelchannels.Service, logger *slog.Logger) modelChannelHandlers {
-	return modelChannelHandlers{service: service, logger: logger}
+func newModelChannelHandlers(service *modelchannels.Service, audit *adminaudit.Service, logger *slog.Logger) modelChannelHandlers {
+	return modelChannelHandlers{service: service, audit: audit, logger: logger}
 }
 
 func (handlers modelChannelHandlers) PublicModels(w http.ResponseWriter, r *http.Request) {
@@ -71,10 +74,16 @@ func (handlers modelChannelHandlers) Create(w http.ResponseWriter, r *http.Reque
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel.create", "channel", channel.ID, nil, channel)
 	writeJSON(w, http.StatusCreated, response{Code: 0, Data: map[string]interface{}{"channel": channel}, Msg: "渠道已创建"})
 }
 
 func (handlers modelChannelHandlers) Update(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.service.Get(r.Context(), r.PathValue("channelId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	var input modelchannels.ChannelInput
 	if decodeJSON(r, &input) != nil {
 		writeJSON(w, http.StatusBadRequest, response{Code: 40031, Msg: "渠道参数格式不正确"})
@@ -85,14 +94,21 @@ func (handlers modelChannelHandlers) Update(w http.ResponseWriter, r *http.Reque
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel.update", "channel", channel.ID, before, channel)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"channel": channel}, Msg: "渠道已更新"})
 }
 
 func (handlers modelChannelHandlers) Delete(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.service.Get(r.Context(), r.PathValue("channelId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	if err := handlers.service.Delete(r.Context(), r.PathValue("channelId")); err != nil {
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel.delete", "channel", r.PathValue("channelId"), before, nil)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]bool{"deleted": true}, Msg: "渠道已删除"})
 }
 
@@ -102,6 +118,7 @@ func (handlers modelChannelHandlers) Test(w http.ResponseWriter, r *http.Request
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel.test", "channel", r.PathValue("channelId"), nil, result)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: result.Message})
 }
 
@@ -111,6 +128,7 @@ func (handlers modelChannelHandlers) SyncModels(w http.ResponseWriter, r *http.R
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel.models_sync", "channel", r.PathValue("channelId"), nil, result)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: result.Message})
 }
 
@@ -125,10 +143,16 @@ func (handlers modelChannelHandlers) CreateModel(w http.ResponseWriter, r *http.
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel_model.create", "channel_model", model.ID, nil, model)
 	writeJSON(w, http.StatusCreated, response{Code: 0, Data: map[string]interface{}{"model": model}, Msg: "模型已添加"})
 }
 
 func (handlers modelChannelHandlers) UpdateModel(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.channelModel(r.Context(), r.PathValue("channelId"), r.PathValue("modelId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	var input modelchannels.ModelInput
 	if decodeJSON(r, &input) != nil {
 		writeJSON(w, http.StatusBadRequest, response{Code: 40032, Msg: "模型参数格式不正确"})
@@ -139,15 +163,35 @@ func (handlers modelChannelHandlers) UpdateModel(w http.ResponseWriter, r *http.
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel_model.update", "channel_model", model.ID, before, model)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"model": model}, Msg: "模型已更新"})
 }
 
 func (handlers modelChannelHandlers) DeleteModel(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.channelModel(r.Context(), r.PathValue("channelId"), r.PathValue("modelId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	if err := handlers.service.DeleteModel(r.Context(), r.PathValue("channelId"), r.PathValue("modelId")); err != nil {
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "channel_model.delete", "channel_model", r.PathValue("modelId"), before, nil)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]bool{"deleted": true}, Msg: "模型已删除"})
+}
+
+func (handlers modelChannelHandlers) channelModel(ctx context.Context, channelID, modelID string) (modelchannels.Model, error) {
+	channel, err := handlers.service.Get(ctx, channelID)
+	if err != nil {
+		return modelchannels.Model{}, err
+	}
+	for _, model := range channel.Models {
+		if model.ID == modelID {
+			return model, nil
+		}
+	}
+	return modelchannels.Model{}, modelchannels.ErrModelNotFound
 }
 
 func (handlers modelChannelHandlers) writeError(w http.ResponseWriter, err error) {

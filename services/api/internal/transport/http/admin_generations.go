@@ -2,9 +2,12 @@ package httptransport
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"nova-creator-platform/services/api/internal/adminaudit"
 	"nova-creator-platform/services/api/internal/admingenerations"
 	"nova-creator-platform/services/api/internal/assets"
 	"nova-creator-platform/services/api/internal/generation"
@@ -14,22 +17,34 @@ type adminGenerationHandlers struct {
 	service  *admingenerations.Service
 	assets   *assets.Service
 	recovery *generation.RecoveryService
+	audit    *adminaudit.Service
 	logger   *slog.Logger
 }
 
-func newAdminGenerationHandlers(service *admingenerations.Service, assetService *assets.Service, recovery *generation.RecoveryService, logger *slog.Logger) adminGenerationHandlers {
-	return adminGenerationHandlers{service: service, assets: assetService, recovery: recovery, logger: logger}
+func newAdminGenerationHandlers(service *admingenerations.Service, assetService *assets.Service, recovery *generation.RecoveryService, audit *adminaudit.Service, logger *slog.Logger) adminGenerationHandlers {
+	return adminGenerationHandlers{service: service, assets: assetService, recovery: recovery, audit: audit, logger: logger}
 }
 
 func (handlers adminGenerationHandlers) Check(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.service.Get(r.Context(), r.PathValue("taskId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	task, err := handlers.recovery.CheckAdmin(r.Context(), r.PathValue("taskId"))
 	if err != nil {
 		handlers.writeReviewError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "generation.check", "generation", task.ID, before, task)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: task, Msg: "状态已检查"})
 }
 func (handlers adminGenerationHandlers) Review(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.service.Get(r.Context(), r.PathValue("taskId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	var input struct {
 		Action    string `json:"action"`
 		ResultURL string `json:"resultUrl"`
@@ -40,7 +55,7 @@ func (handlers adminGenerationHandlers) Review(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var task admingenerations.Task
-	var err error
+	err = nil
 	switch input.Action {
 	case "confirm_failed":
 		var value generation.Task
@@ -61,6 +76,7 @@ func (handlers adminGenerationHandlers) Review(w http.ResponseWriter, r *http.Re
 		handlers.writeReviewError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "generation.review."+input.Action, "generation", task.ID, before, task)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: task, Msg: "任务已处理"})
 }
 func (handlers adminGenerationHandlers) writeReviewError(w http.ResponseWriter, err error) {
@@ -77,7 +93,24 @@ func (handlers adminGenerationHandlers) Preview(w http.ResponseWriter, r *http.R
 		handlers.writeError(w, err)
 		return
 	}
-	asset, content, err := handlers.assets.OpenByID(r.Context(), task.AssetID)
+	var asset assets.Asset
+	var content io.ReadSeekCloser
+	if r.URL.Query().Get("thumbnail") == "1" {
+		assetRecord, source, openErr := handlers.assets.OpenByID(r.Context(), task.AssetID)
+		asset, err = assetRecord, openErr
+		if source != nil {
+			_ = source.Close()
+		}
+		if err == nil {
+			if asset.Kind == assets.KindVideo {
+				asset, content, err = handlers.assets.OpenPosterByID(r.Context(), task.AssetID)
+			} else {
+				asset, content, err = handlers.assets.OpenThumbnailByID(r.Context(), task.AssetID)
+			}
+		}
+	} else {
+		asset, content, err = handlers.assets.OpenByID(r.Context(), task.AssetID)
+	}
 	if err != nil {
 		if errors.Is(err, assets.ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, response{Code: 40442, Msg: "任务结果素材不存在"})
@@ -87,6 +120,20 @@ func (handlers adminGenerationHandlers) Preview(w http.ResponseWriter, r *http.R
 		return
 	}
 	defer content.Close()
+	if r.URL.Query().Get("thumbnail") == "1" {
+		if asset.Kind == assets.KindVideo {
+			w.Header().Set("Content-Type", "image/jpeg")
+		} else {
+			w.Header().Set("Content-Type", "image/webp")
+		}
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		name := task.AssetID + ".webp"
+		if asset.Kind == assets.KindVideo {
+			name = task.AssetID + ".jpg"
+		}
+		http.ServeContent(w, r, name, asset.CreatedAt, content)
+		return
+	}
 	w.Header().Set("Content-Type", asset.MimeType)
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	http.ServeContent(w, r, asset.OriginalName, asset.CreatedAt, content)
@@ -103,8 +150,30 @@ func (handlers adminGenerationHandlers) List(w http.ResponseWriter, r *http.Requ
 		handlers.writeError(w, admingenerations.ErrInvalidInput)
 		return
 	}
+	cursorAt, cursorID, err := admingenerations.DecodeCursor(r.URL.Query().Get("cursor"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
+	var since *time.Time
+	now := time.Now()
+	switch r.URL.Query().Get("window") {
+	case "", "7d":
+		value := now.AddDate(0, 0, -7)
+		since = &value
+	case "24h":
+		value := now.Add(-24 * time.Hour)
+		since = &value
+	case "30d":
+		value := now.AddDate(0, 0, -30)
+		since = &value
+	case "all":
+	default:
+		handlers.writeError(w, admingenerations.ErrInvalidInput)
+		return
+	}
 	result, err := handlers.service.List(r.Context(), admingenerations.ListInput{
-		Page: page, PageSize: pageSize, Search: r.URL.Query().Get("search"), Status: r.URL.Query().Get("status"), Kind: r.URL.Query().Get("type"),
+		Page: page, PageSize: pageSize, Search: r.URL.Query().Get("search"), Status: r.URL.Query().Get("status"), Kind: r.URL.Query().Get("type"), Since: since, CursorAt: cursorAt, CursorID: cursorID,
 	})
 	if err != nil {
 		handlers.writeError(w, err)
@@ -123,11 +192,17 @@ func (handlers adminGenerationHandlers) Get(w http.ResponseWriter, r *http.Reque
 }
 
 func (handlers adminGenerationHandlers) Retry(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.service.Get(r.Context(), r.PathValue("taskId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	result, err := handlers.service.Retry(r.Context(), r.PathValue("taskId"))
 	if err != nil {
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "generation.retry", "generation", result.Task.ID, before, result.Task)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: "任务已重新排队"})
 }
 
@@ -148,15 +223,22 @@ func (handlers adminGenerationHandlers) Cancel(w http.ResponseWriter, r *http.Re
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "generation.cancel", "generation", result.Task.ID, task, result.Task)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: "排队任务已取消"})
 }
 
 func (handlers adminGenerationHandlers) Refund(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.service.Get(r.Context(), r.PathValue("taskId"))
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	result, err := handlers.service.Refund(r.Context(), r.PathValue("taskId"))
 	if err != nil {
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "generation.refund", "generation", result.Task.ID, before, result.Task)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: "积分已退回"})
 }
 

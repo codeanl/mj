@@ -30,4 +30,7 @@ func TestCreateImageThumbnailPreservesRatioAndCapsLongestEdge(t *testing.T) {
 	if config.Width != 400 || config.Height != 200 {
 		t.Fatalf("unexpected thumbnail dimensions: %dx%d", config.Width, config.Height)
 	}
+	if len(thumbnail) < 12 || string(thumbnail[:4]) != "RIFF" || string(thumbnail[8:12]) != "WEBP" {
+		t.Fatal("thumbnail must be encoded as WebP")
+	}
 }

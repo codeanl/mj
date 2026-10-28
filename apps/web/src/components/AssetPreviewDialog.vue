@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue"
-import { Download, Image, LoaderCircle, Music, Pencil, Trash2, Video, X } from "@lucide/vue"
+import { Download, Image, LoaderCircle, Music, Video, X } from "@lucide/vue"
 
 import * as assetApi from "@/services/assets"
 import { useAssetDownload } from "@/hooks/use-asset-download"
+import { useModalDialog } from "@/hooks/use-modal-dialog"
 
 const props = defineProps<{ asset: assetApi.Asset; mediaUrl: string }>()
-const emit = defineEmits<{ close: []; recreate: [asset: assetApi.Asset]; rename: [asset: assetApi.Asset]; delete: [asset: assetApi.Asset] }>()
+const emit = defineEmits<{ close: []; recreate: [asset: assetApi.Asset] }>()
 const downloading = ref(false)
 const referencePreviewUrls = ref<Record<string, string>>({})
+const dialogOpen = ref(true)
+const dialogPanel = ref<HTMLElement | null>(null)
 const { downloadAsset: downloadAssetFile } = useAssetDownload()
+
+useModalDialog(dialogOpen, dialogPanel, requestClose)
 
 const generation = computed(() => props.asset.generation)
 const typeLabel = computed(() => props.asset.type === "image" ? "图片" : props.asset.type === "video" ? "视频" : "音频")
@@ -124,11 +129,16 @@ async function downloadAsset() {
     downloading.value = false
   }
 }
+
+function requestClose() {
+  dialogOpen.value = false
+  emit("close")
+}
 </script>
 
 <template>
-  <div class="asset-viewer" role="dialog" aria-modal="true" :aria-label="asset.title" @click.self="emit('close')">
-    <div class="asset-viewer__panel">
+  <div class="asset-viewer" @click.self="requestClose">
+    <div ref="dialogPanel" class="asset-viewer__panel" role="dialog" aria-modal="true" :aria-label="asset.title" tabindex="-1">
       <div class="asset-viewer__media">
         <img v-if="asset.type === 'image'" :src="mediaUrl" :alt="asset.title" />
         <video v-else-if="asset.type === 'video'" :src="mediaUrl" controls autoplay />
@@ -156,10 +166,8 @@ async function downloadAsset() {
         </div>
         <footer class="asset-viewer__actions">
           <button v-if="canRecreate" class="asset-viewer__recreate" type="button" @click="emit('recreate', asset)">用同款参数创作</button>
-          <button type="button" title="重命名素材" aria-label="重命名素材" @click="emit('rename', asset)"><Pencil :size="18" /></button>
           <button type="button" title="下载素材" aria-label="下载素材" :disabled="downloading" @click="downloadAsset"><LoaderCircle v-if="downloading" class="spin" :size="18" /><Download v-else :size="18" /></button>
-          <button type="button" title="删除素材" aria-label="删除素材" @click="emit('delete', asset)"><Trash2 :size="18" /></button>
-          <button type="button" title="关闭预览" aria-label="关闭预览" @click="emit('close')"><X :size="18" /></button>
+          <button type="button" title="关闭预览" aria-label="关闭预览" data-dialog-initial-focus @click="requestClose"><X :size="18" /></button>
         </footer>
       </aside>
     </div>
@@ -178,7 +186,7 @@ async function downloadAsset() {
 .asset-viewer__scroll::-webkit-scrollbar { display: none; }
 .asset-viewer__eyebrow { display: flex; align-items: center; gap: 6px; color: #657080; font-size: 10px; }
 .asset-viewer__details h2 { margin: 12px 0 0; overflow-wrap: anywhere; font-size: 17px; line-height: 1.45; }
-.asset-viewer__prompt { max-height: 120px; overflow-y: auto; overscroll-behavior: contain; margin: 12px 0 0; border-left: 2px solid #7181eb; padding: 2px 8px 2px 10px; color: #5b6572; font-size: 11px; line-height: 1.65; white-space: pre-wrap; scrollbar-width: none; }
+.asset-viewer__prompt { max-height: 120px; overflow-y: auto; overscroll-behavior: contain; margin: 12px 0 0; border-left: 2px solid #6fbb91; padding: 2px 8px 2px 10px; color: #5b6572; font-size: 11px; line-height: 1.65; white-space: pre-wrap; scrollbar-width: none; }
 .asset-viewer__prompt::-webkit-scrollbar { display: none; }
 .asset-viewer__references { display: grid; max-height: 142px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; overflow-y: auto; overscroll-behavior: contain; margin-top: 12px; scrollbar-width: none; }
 .asset-viewer__references::-webkit-scrollbar { display: none; }
@@ -194,7 +202,7 @@ async function downloadAsset() {
 .asset-viewer__actions button { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid #d8dde4; border-radius: 8px; background: #fff; color: #4f5965; cursor: pointer; }
 .asset-viewer__actions button:hover { border-color: #c6ccd5; background: #f1f3f6; color: #242b33; }
 .asset-viewer__actions button:disabled { cursor: wait; opacity: .62; }
-.asset-viewer__actions .asset-viewer__recreate { display: inline-flex; width: auto; min-width: 0; flex: 1; padding: 0 14px; border-color: #6f48ea; background: #7048ed; color: #fff; font-size: 11px; font-weight: 600; }
-.asset-viewer__actions .asset-viewer__recreate:hover { border-color: #5f3bd2; background: #623ed7; color: #fff; }
+.asset-viewer__actions .asset-viewer__recreate { display: inline-flex; width: auto; min-width: 0; flex: 1; padding: 0 14px; border-color: #b9dfd0; background: #eaf7ef; color: #287659; font-size: 11px; font-weight: 600; }
+.asset-viewer__actions .asset-viewer__recreate:hover { border-color: #8fc9aa; background: #d8f0e3; color: #1f6c4e; }
 @media (max-width: 820px) { .asset-viewer { padding: 14px; } .asset-viewer__panel { display: grid; height: calc(100dvh - 28px); grid-template-columns: 1fr; grid-template-rows: minmax(180px, 52dvh) minmax(0, 1fr); } .asset-viewer__media { min-height: 0; } .asset-viewer__scroll { padding: 20px 18px 24px; } .asset-viewer__prompt { max-height: 96px; } }
 </style>

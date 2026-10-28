@@ -1,6 +1,11 @@
 package admingenerations
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+)
 
 func TestParseAccountIDAcceptsPaddedPublicID(t *testing.T) {
 	value, ok := parseAccountID("0001")
@@ -17,5 +22,17 @@ func TestParseAccountIDAcceptsPaddedPublicID(t *testing.T) {
 func TestGenerationFiltersRejectUnknownValues(t *testing.T) {
 	if validStatusFilter("waiting") || validKindFilter("audio") {
 		t.Fatal("unknown generation filters must be rejected")
+	}
+}
+
+func TestGenerationCursorRoundTrip(t *testing.T) {
+	task := Task{ID: uuid.NewString(), CreatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	value := encodeCursor(task)
+	createdAt, id, err := DecodeCursor(value)
+	if err != nil || createdAt == nil || id == nil || !createdAt.Equal(task.CreatedAt) || *id != task.ID {
+		t.Fatalf("unexpected cursor round trip: %v %v %v", createdAt, id, err)
+	}
+	if _, _, err := DecodeCursor("invalid"); err == nil {
+		t.Fatal("invalid cursor must be rejected")
 	}
 }

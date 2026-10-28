@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, ref, watch } from "vue"
 import { useRouter } from "vue-router"
 import { useDebounceFn, useIntervalFn } from "@vueuse/core"
 import {
@@ -10,7 +10,6 @@ import {
   Check,
   CircleAlert,
   Download,
-  HardDrive,
   Image,
   Images,
   ListChecks,
@@ -35,6 +34,7 @@ import { notification } from "@/services/notifications"
 import { cancelGenerationTask, checkGenerationTask, retryGenerationTask } from "@/services/generation"
 import { useAuthStore } from "@/stores/auth"
 import { useAssetDownload } from "@/hooks/use-asset-download"
+import { useModalDialog } from "@/hooks/use-modal-dialog"
 
 type AssetFilter = "all" | assetApi.AssetType
 
@@ -64,7 +64,8 @@ const renameTitle = ref("")
 const savingRename = ref(false)
 const deleteConfirmationOpen = ref(false)
 const deleting = ref(false)
-const stats = ref<assetApi.AssetStats | null>(null)
+const renameDialogPanel = ref<HTMLElement | null>(null)
+const deleteDialogPanel = ref<HTMLElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const previewUrls = ref<Record<string, string>>({})
 const previewSignatures = ref<Record<string, string>>({})
@@ -76,6 +77,9 @@ const { downloadAsset: downloadAssetFile, downloadAssets: downloadAssetFiles } =
 const router = useRouter()
 const sameParametersStorageKey = "nova.same-generation-parameters"
 let loadSequence = 0
+
+useModalDialog(computed(() => Boolean(renameTarget.value)), renameDialogPanel, () => { renameTarget.value = null })
+useModalDialog(deleteConfirmationOpen, deleteDialogPanel, () => { deleteConfirmationOpen.value = false })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 const paginationItems = computed(() => {
@@ -123,7 +127,6 @@ onBeforeUnmount(() => {
   closeAsset()
   revokePreviewUrls()
 })
-onMounted(() => void loadStats())
 
 async function loadAssets(options: { silent?: boolean } = {}) {
   const sequence = ++loadSequence
@@ -224,7 +227,6 @@ async function handleFileSelection(event: Event) {
     searchKeyword.value = ""
     if (currentPage.value !== 1) currentPage.value = 1
     else await loadAssets()
-    await loadStats()
   } catch (error) {
     notification.error(apiErrorMessage(error, "素材上传失败"))
   } finally {
@@ -307,14 +309,6 @@ async function downloadAsset(asset: assetApi.Asset) {
   await downloadAssetFile(asset)
 }
 
-async function loadStats() {
-  try {
-    stats.value = await assetApi.getAssetStats()
-  } catch (error) {
-    notification.error(apiErrorMessage(error, "素材统计加载失败"))
-  }
-}
-
 function toggleManaging() {
   managing.value = !managing.value
   selectedIds.value = []
@@ -372,7 +366,7 @@ async function confirmDelete() {
     const result = await assetApi.deleteAssets(selectedIds.value)
     deleteConfirmationOpen.value = false
     selectedIds.value = []
-    await Promise.all([loadAssets(), loadStats()])
+    await loadAssets()
     notification.success(`已删除 ${result.deleted} 项素材`)
   } catch (error) {
     notification.error(apiErrorMessage(error, "素材删除失败"))
@@ -421,7 +415,7 @@ function statusLabel(status: assetApi.AssetStatus) {
 <template>
   <section class="assets-page">
     <header class="assets-header">
-      <div><h1>我的素材</h1><span v-if="stats" class="assets-storage"><HardDrive :size="14" />{{ formatBytes(stats.totalBytes) }} · {{ stats.totalCount }} 项</span></div>
+      <div><h1>我的素材</h1></div>
       <div class="assets-header__actions">
         <button class="assets-manage" type="button" :class="{ 'is-active': managing }" @click="toggleManaging"><ListChecks :size="17" /><span>{{ managing ? "完成管理" : "批量管理" }}</span></button>
         <button class="assets-upload" type="button" :disabled="uploading" @click="chooseAsset">
@@ -439,16 +433,18 @@ function statusLabel(status: assetApi.AssetStatus) {
         <input v-model="searchKeyword" type="search" placeholder="搜索素材名称" />
       </label>
 
-      <div class="asset-filters" role="tablist" aria-label="素材类型">
-        <button v-for="filter in filters" :key="filter.value" type="button" role="tab" :aria-selected="activeFilter === filter.value" :class="{ 'asset-filter--active': activeFilter === filter.value }" @click="selectFilter(filter.value)">
-          <component :is="filter.icon" :size="15" />
-          <span>{{ filter.label }}</span>
-        </button>
-      </div>
+      <div class="asset-toolbar__filters">
+        <div class="asset-filters" role="tablist" aria-label="素材类型">
+          <button v-for="filter in filters" :key="filter.value" type="button" role="tab" :aria-selected="activeFilter === filter.value" :class="{ 'asset-filter--active': activeFilter === filter.value }" @click="selectFilter(filter.value)">
+            <component :is="filter.icon" :size="15" />
+            <span>{{ filter.label }}</span>
+          </button>
+        </div>
 
-      <div class="asset-select-filters">
-        <select v-model="sourceFilter" aria-label="素材来源"><option value="">全部来源</option><option value="generated">AI 生成</option><option value="uploaded">用户上传</option></select>
-        <select v-model="statusFilter" aria-label="素材状态"><option value="">全部状态</option><option value="ready">已完成</option><option value="generating">生成中</option><option value="needs_review">等待确认</option><option value="failed">生成失败</option></select>
+        <div class="asset-select-filters">
+          <select v-model="sourceFilter" aria-label="素材来源"><option value="">全部来源</option><option value="generated">AI 生成</option><option value="uploaded">用户上传</option></select>
+          <select v-model="statusFilter" aria-label="素材状态"><option value="">全部状态</option><option value="ready">已完成</option><option value="generating">生成中</option><option value="needs_review">等待确认</option><option value="failed">生成失败</option></select>
+        </div>
       </div>
     </div>
 
@@ -512,14 +508,14 @@ function statusLabel(status: assetApi.AssetStatus) {
       </div>
     </footer>
 
-    <AssetPreviewDialog v-if="selectedAsset && selectedAssetUrl" :asset="selectedAsset" :media-url="selectedAssetUrl" @close="closeAsset" @recreate="useSameParameters" @rename="openRename" @delete="requestDelete" />
+    <AssetPreviewDialog v-if="selectedAsset && selectedAssetUrl" :asset="selectedAsset" :media-url="selectedAssetUrl" @close="closeAsset" @recreate="useSameParameters" />
 
-    <div v-if="renameTarget" class="asset-manage-dialog" role="dialog" aria-modal="true" aria-label="重命名素材" @click.self="renameTarget = null">
-      <form @submit.prevent="saveRename"><h2>重命名素材</h2><label><span>素材名称</span><input v-model="renameTitle" maxlength="120" autofocus /></label><div><button type="button" @click="renameTarget = null">取消</button><button class="is-primary" type="submit" :disabled="savingRename"><LoaderCircle v-if="savingRename" class="spin" :size="15" />保存</button></div></form>
+    <div v-if="renameTarget" class="asset-manage-dialog" @click.self="renameTarget = null">
+      <form ref="renameDialogPanel" role="dialog" aria-modal="true" aria-label="重命名素材" tabindex="-1" @submit.prevent="saveRename"><h2>重命名素材</h2><label><span>素材名称</span><input v-model="renameTitle" maxlength="120" autofocus /></label><div><button type="button" @click="renameTarget = null">取消</button><button class="is-primary" type="submit" :disabled="savingRename"><LoaderCircle v-if="savingRename" class="spin" :size="15" />保存</button></div></form>
     </div>
 
-    <div v-if="deleteConfirmationOpen" class="asset-manage-dialog" role="dialog" aria-modal="true" aria-label="删除素材" @click.self="deleteConfirmationOpen = false">
-      <section><h2>确认删除 {{ selectedIds.length }} 项素材</h2><p>素材文件、生成记录和关联任务将一并删除，此操作无法撤销。</p><div><button type="button" @click="deleteConfirmationOpen = false">取消</button><button class="is-danger" type="button" :disabled="deleting" @click="confirmDelete"><LoaderCircle v-if="deleting" class="spin" :size="15" />确认删除</button></div></section>
+    <div v-if="deleteConfirmationOpen" class="asset-manage-dialog" @click.self="deleteConfirmationOpen = false">
+      <section ref="deleteDialogPanel" role="dialog" aria-modal="true" aria-label="删除素材" tabindex="-1"><h2>确认删除 {{ selectedIds.length }} 项素材</h2><p>素材文件、生成记录和关联任务将一并删除，此操作无法撤销。</p><div><button type="button" data-dialog-initial-focus @click="deleteConfirmationOpen = false">取消</button><button class="is-danger" type="button" :disabled="deleting" @click="confirmDelete"><LoaderCircle v-if="deleting" class="spin" :size="15" />确认删除</button></div></section>
     </div>
   </section>
 </template>

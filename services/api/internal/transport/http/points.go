@@ -5,16 +5,18 @@ import (
 	"log/slog"
 	"net/http"
 
+	"nova-creator-platform/services/api/internal/adminaudit"
 	"nova-creator-platform/services/api/internal/points"
 )
 
 type pointHandlers struct {
 	service *points.Service
+	audit   *adminaudit.Service
 	logger  *slog.Logger
 }
 
-func newPointHandlers(service *points.Service, logger *slog.Logger) pointHandlers {
-	return pointHandlers{service: service, logger: logger}
+func newPointHandlers(service *points.Service, audit *adminaudit.Service, logger *slog.Logger) pointHandlers {
+	return pointHandlers{service: service, audit: audit, logger: logger}
 }
 
 func (handlers pointHandlers) Wallet(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +44,11 @@ func (handlers pointHandlers) GetRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handlers pointHandlers) SaveRules(w http.ResponseWriter, r *http.Request) {
+	before, err := handlers.service.GetConfig(r.Context())
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	var input points.RuleConfig
 	if decodeJSON(r, &input) != nil {
 		handlers.writeError(w, points.ErrInvalidInput)
@@ -52,6 +59,7 @@ func (handlers pointHandlers) SaveRules(w http.ResponseWriter, r *http.Request) 
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "points.rules_update", "points_rules", "default", before, config)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: config, Msg: "积分规则已保存"})
 }
 
@@ -72,6 +80,7 @@ func (handlers pointHandlers) Adjust(w http.ResponseWriter, r *http.Request) {
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "points.adjust", "user", r.PathValue("accountId"), map[string]float64{"balance": result.Balance - input.Amount}, map[string]interface{}{"balance": result.Balance, "amount": input.Amount, "description": input.Description})
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: result, Msg: "用户积分已调整"})
 }
 

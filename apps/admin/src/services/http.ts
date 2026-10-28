@@ -1,5 +1,11 @@
 export const ADMIN_ACCESS_TOKEN_KEY = "nova.admin_access_token"
 
+let unauthorizedHandler: (() => void) | undefined
+
+export function setUnauthorizedHandler(handler: () => void) {
+  unauthorizedHandler = handler
+}
+
 export type ApiResponse<T> = {
   code: number
   data: T
@@ -13,7 +19,10 @@ export async function request<T>(path: string, init: RequestInit = {}) {
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json")
   const response = await fetch(`/api/v1${path}`, { ...init, headers })
   const payload = (await response.json().catch(() => ({}))) as Partial<ApiResponse<T>>
-  if (response.status === 401) localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+  if (response.status === 401) {
+    localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+    unauthorizedHandler?.()
+  }
   if (!response.ok || payload.data === undefined) throw new Error(payload.msg || "请求失败，请稍后重试")
   return payload.data
 }

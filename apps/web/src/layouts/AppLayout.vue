@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue"
+import { computed, ref } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
   Boxes,
@@ -16,6 +16,7 @@ import {
 
 import BrandMark from "@/components/BrandMark.vue"
 import UserAvatar from "@/components/UserAvatar.vue"
+import { useModalDialog } from "@/hooks/use-modal-dialog"
 import { useAppStore } from "@/stores/app"
 import { useAuthStore } from "@/stores/auth"
 
@@ -24,7 +25,9 @@ const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const logoutConfirmationOpen = ref(false)
-const logoutCancelButton = ref<HTMLButtonElement | null>(null)
+const logoutDialogPanel = ref<HTMLElement | null>(null)
+
+useModalDialog(logoutConfirmationOpen, logoutDialogPanel, cancelLogout)
 
 const primaryNavigation = [
   { label: "创作", path: "/", icon: House },
@@ -41,11 +44,9 @@ async function logout() {
   await router.replace("/login")
 }
 
-async function requestLogout() {
+function requestLogout() {
   appStore.closeMobileNavigation()
   logoutConfirmationOpen.value = true
-  await nextTick()
-  logoutCancelButton.value?.focus()
 }
 
 function cancelLogout() {
@@ -102,6 +103,12 @@ function formatPoints(value: number | undefined) {
             <small class="profile-strip__points" title="积分余额"><Coins :size="12" />{{ formatPoints(authStore.user?.pointsBalance) }} 积分</small>
             </span>
           </RouterLink>
+          <div class="profile-strip__hover-card" role="status" aria-label="账号摘要">
+            <strong>{{ authStore.user?.username || "未登录" }}</strong>
+            <small>{{ authStore.user?.email || "" }}</small>
+            <div><span>账号状态</span><em>{{ authStore.user?.status === "active" ? "正常" : "已停用" }}</em></div>
+            <div><span>积分余额</span><em class="profile-strip__hover-points"><Coins :size="13" />{{ formatPoints(authStore.user?.pointsBalance) }}</em></div>
+          </div>
           <button type="button" aria-label="退出登录" title="退出登录" @click="requestLogout"><LogOut :size="16" /></button>
         </div>
       </div>
@@ -131,13 +138,13 @@ function formatPoints(value: number | undefined) {
       </main>
     </section>
 
-    <div v-if="logoutConfirmationOpen" class="logout-confirmation" @click.self="cancelLogout" @keydown.esc="cancelLogout">
-      <section class="logout-confirmation__dialog" role="dialog" aria-modal="true" aria-labelledby="logout-confirmation-title" aria-describedby="logout-confirmation-description">
+    <div v-if="logoutConfirmationOpen" class="logout-confirmation" @click.self="cancelLogout">
+      <section ref="logoutDialogPanel" class="logout-confirmation__dialog" role="dialog" aria-modal="true" aria-labelledby="logout-confirmation-title" aria-describedby="logout-confirmation-description" tabindex="-1">
         <span class="logout-confirmation__icon"><LogOut :size="20" /></span>
         <h2 id="logout-confirmation-title">确认退出登录</h2>
         <p id="logout-confirmation-description">退出后需要重新登录才能继续创作。</p>
         <div class="logout-confirmation__actions">
-          <button ref="logoutCancelButton" type="button" @click="cancelLogout">取消</button>
+          <button type="button" data-dialog-initial-focus @click="cancelLogout">取消</button>
           <button class="logout-confirmation__submit" type="button" @click="logout">退出登录</button>
         </div>
       </section>

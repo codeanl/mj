@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, ref } from "vue"
 import { ElButton, ElInput, ElInputNumber, ElMessage } from "element-plus"
-import "element-plus/dist/index.css"
+import "element-plus/es/components/button/style/css"
+import "element-plus/es/components/input/style/css"
+import "element-plus/es/components/input-number/style/css"
+import "element-plus/es/components/message/style/css"
 import { LoaderCircle, Plus, RotateCcw, Save } from "@lucide/vue"
 
 import * as pointApi from "@/services/points"

@@ -75,7 +75,7 @@ func (handlers authHandlers) Logout(w http.ResponseWriter, r *http.Request) {
 		handlers.writeSecurityError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, response{Code: 0, Data: nil, Msg: "已退出登录"})
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]bool{"loggedOut": true}, Msg: "已退出登录"})
 }
 
 func (handlers authHandlers) ChangePassword(w http.ResponseWriter, r *http.Request) {

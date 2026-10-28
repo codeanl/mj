@@ -23,3 +23,7 @@ export function login(email: string, password: string) {
 export function currentUser() {
   return request<AdminUser>("/auth/me")
 }
+
+export function logout() {
+  return request<{ loggedOut: boolean }>("/auth/logout", { method: "POST" })
+}

@@ -223,10 +223,10 @@ func (repository *Repository) UpsertDiscoveredModels(ctx context.Context, channe
 
 func (repository *Repository) ListPublicModels(ctx context.Context, capability string) ([]PublicModel, error) {
 	rows, err := repository.pool.Query(ctx, `
-		SELECT selected.model_id, selected.display_name, selected.capability,selected.capability_config
+		SELECT selected.model_id, selected.display_name, selected.capability,selected.capability_config, selected.protocol
 		FROM (
 			SELECT DISTINCT ON (lower(model.model_id)) model.model_id, model.display_name, model.capability,model.capability_config,
-			       model.sort_order, model.created_at
+			       model.sort_order, model.created_at, channel.protocol
 			FROM channel_models model
 			JOIN model_channels channel ON channel.id = model.channel_id
 			WHERE channel.enabled = true AND model.enabled = true AND ($1 = '' OR model.capability = $1)
@@ -243,7 +243,7 @@ func (repository *Repository) ListPublicModels(ctx context.Context, capability s
 	for rows.Next() {
 		var model PublicModel
 		var capabilityConfig []byte
-		if err := rows.Scan(&model.ID, &model.DisplayName, &model.Capability, &capabilityConfig); err != nil {
+		if err := rows.Scan(&model.ID, &model.DisplayName, &model.Capability, &capabilityConfig, &model.protocol); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(capabilityConfig, &model.CapabilityConfig); err != nil {

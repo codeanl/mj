@@ -49,6 +49,7 @@ export type GenerationPage = {
   total: number
   page: number
   pageSize: number
+  nextCursor?: string
   summary: GenerationSummary
 }
 
@@ -58,11 +59,13 @@ export type GenerationActionResult = {
   refundedPointCost?: number
 }
 
-export function listGenerations(input: { page: number; pageSize: number; search?: string; status?: GenerationStatus; type?: GenerationKind }) {
+export function listGenerations(input: { page: number; pageSize: number; search?: string; status?: GenerationStatus; type?: GenerationKind; window: "24h" | "7d" | "30d" | "all"; cursor?: string }) {
   const query = new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) })
   if (input.search?.trim()) query.set("search", input.search.trim())
   if (input.status) query.set("status", input.status)
   if (input.type) query.set("type", input.type)
+  query.set("window", input.window)
+  if (input.cursor) query.set("cursor", input.cursor)
   return request<GenerationPage>(`/admin/generations?${query}`)
 }
 
@@ -82,9 +85,10 @@ export function refundGeneration(taskId: string) {
   return action(taskId, "refund")
 }
 
-export async function getGenerationPreview(taskId: string) {
+export async function getGenerationPreview(taskId: string, thumbnail = false, signal?: AbortSignal) {
   const token = localStorage.getItem(ADMIN_ACCESS_TOKEN_KEY)
-  const response = await fetch(`/api/v1/admin/generations/${encodeURIComponent(taskId)}/preview`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
+  const suffix = thumbnail ? "?thumbnail=1" : ""
+  const response = await fetch(`/api/v1/admin/generations/${encodeURIComponent(taskId)}/preview${suffix}`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined, signal })
   if (!response.ok) throw new Error("任务缩略图加载失败")
   return response.blob()
 }

@@ -113,6 +113,7 @@ func (service *Service) DeleteMany(ctx context.Context, userID string, ids []str
 			_ = service.storage.Delete(asset.StorageKey)
 		}
 		_ = service.storage.Delete(asset.ID + ".thumb.jpg")
+		_ = service.storage.Delete(asset.ID + ".thumb.webp")
 		_ = service.storage.Delete(asset.ID + ".poster.jpg")
 	}
 	return len(deleted), nil
@@ -176,12 +177,24 @@ func (service *Service) OpenThumbnail(ctx context.Context, userID, id string) (A
 	if err != nil {
 		return Asset{}, nil, err
 	}
+	return service.openThumbnail(asset)
+}
+
+func (service *Service) OpenThumbnailByID(ctx context.Context, id string) (Asset, io.ReadSeekCloser, error) {
+	asset, err := service.repository.FindByID(ctx, id)
+	if err != nil {
+		return Asset{}, nil, err
+	}
+	return service.openThumbnail(asset)
+}
+
+func (service *Service) openThumbnail(asset Asset) (Asset, io.ReadSeekCloser, error) {
 	if asset.Kind != KindImage {
 		return Asset{}, nil, ErrInvalidAsset
 	}
 	service.thumbnailMu.Lock()
 	defer service.thumbnailMu.Unlock()
-	thumbnailKey := asset.ID + ".thumb.jpg"
+	thumbnailKey := asset.ID + ".thumb.webp"
 	if thumbnail, openErr := service.storage.Open(thumbnailKey); openErr == nil {
 		return asset, thumbnail, nil
 	}
@@ -209,6 +222,18 @@ func (service *Service) OpenPoster(ctx context.Context, userID, id string) (Asse
 	if err != nil {
 		return Asset{}, nil, err
 	}
+	return service.openPoster(ctx, asset)
+}
+
+func (service *Service) OpenPosterByID(ctx context.Context, id string) (Asset, io.ReadSeekCloser, error) {
+	asset, err := service.repository.FindByID(ctx, id)
+	if err != nil {
+		return Asset{}, nil, err
+	}
+	return service.openPoster(ctx, asset)
+}
+
+func (service *Service) openPoster(ctx context.Context, asset Asset) (Asset, io.ReadSeekCloser, error) {
 	if asset.Kind != KindVideo || asset.storageKey == "" {
 		return Asset{}, nil, ErrInvalidAsset
 	}

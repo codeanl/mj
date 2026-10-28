@@ -46,6 +46,15 @@ func (service *Service) List(ctx context.Context, actorID string, input ListInpu
 	return page, nil
 }
 
+func (service *Service) Get(ctx context.Context, accountID int64) (User, error) {
+	if accountID < 1 {
+		return User{}, ErrInvalidInput
+	}
+	user, err := service.repository.FindByAccountID(ctx, accountID)
+	user.internalID = ""
+	return user, err
+}
+
 func (service *Service) Create(ctx context.Context, input CreateInput) (User, error) {
 	email, username, err := normalizeIdentity(input.Email, input.Username)
 	if err != nil || !validPassword(input.Password) || !validRole(input.Role) || !validStatus(input.Status) {

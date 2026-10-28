@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue"
 import { ElButton, ElDialog, ElInput, ElInputNumber, ElMessage, ElMessageBox, ElOption, ElSelect, ElSwitch } from "element-plus"
-import "element-plus/dist/index.css"
+import "element-plus/es/components/button/style/css"
+import "element-plus/es/components/dialog/style/css"
+import "element-plus/es/components/input/style/css"
+import "element-plus/es/components/input-number/style/css"
+import "element-plus/es/components/message/style/css"
+import "element-plus/es/components/message-box/style/css"
+import "element-plus/es/components/option/style/css"
+import "element-plus/es/components/select/style/css"
+import "element-plus/es/components/switch/style/css"
 import { ArrowLeft, Check, CheckCircle2, CircleAlert, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Search, Settings2, Trash2, XCircle } from "@lucide/vue"
 
 import * as channelApi from "@/services/channels"

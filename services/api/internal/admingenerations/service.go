@@ -2,9 +2,11 @@ package admingenerations
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -27,10 +29,37 @@ func (service *Service) List(ctx context.Context, input ListInput) (Page, error)
 	if accountID, ok := parseAccountID(input.Search); ok {
 		input.AccountID = &accountID
 	}
-	if input.Page < 1 || (input.PageSize != 20 && input.PageSize != 50) || !validStatusFilter(input.Status) || !validKindFilter(input.Kind) {
+	if input.Page < 1 || (input.PageSize != 20 && input.PageSize != 50) || !validStatusFilter(input.Status) || !validKindFilter(input.Kind) || (input.CursorID != nil && input.CursorAt == nil) {
 		return Page{}, ErrInvalidInput
 	}
 	return service.repository.List(ctx, input)
+}
+
+func DecodeCursor(value string) (*time.Time, *string, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return nil, nil, ErrInvalidInput
+	}
+	createdAtText, id, ok := strings.Cut(string(decoded), "|")
+	if !ok || id == "" {
+		return nil, nil, ErrInvalidInput
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, createdAtText)
+	if err != nil {
+		return nil, nil, ErrInvalidInput
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, nil, ErrInvalidInput
+	}
+	return &createdAt, &id, nil
+}
+
+func encodeCursor(task Task) string {
+	value := task.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + task.ID
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
 }
 
 func (service *Service) Get(ctx context.Context, taskID string) (Task, error) {

@@ -1,4 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS users (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -20,6 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique_lower ON users (lower(email));
 CREATE INDEX IF NOT EXISTS users_created_at_idx ON users (created_at DESC);
+CREATE INDEX IF NOT EXISTS users_email_search_idx ON users USING gin (lower(email) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS users_username_search_idx ON users USING gin (lower(username) gin_trgm_ops);
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS public_id bigint;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS points_balance numeric(18,2) NOT NULL DEFAULT 100;
@@ -213,6 +216,11 @@ CREATE TABLE IF NOT EXISTS channel_models (
 
 DROP INDEX IF EXISTS channel_models_model_id_unique_lower;
 CREATE UNIQUE INDEX IF NOT EXISTS channel_models_channel_model_unique_lower ON channel_models (channel_id, lower(model_id));
+
+UPDATE channel_models
+SET capability_config = '{"ratios":["adaptive","21:9","16:9","4:3","1:1","3:4","9:16"],"qualities":["480P","768P","1080P","2K","4K"],"minDuration":4,"maxDuration":30,"modes":["text","frames","reference"],"supportsSound":true,"supportsWatermark":true}'::jsonb
+WHERE capability = 'video'
+  AND NOT (capability_config ?| ARRAY['ratios', 'qualities', 'minDuration', 'maxDuration', 'modes']);
 CREATE INDEX IF NOT EXISTS channel_models_channel_sort_idx ON channel_models (channel_id, sort_order ASC, created_at ASC);
 
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS channel_id uuid REFERENCES model_channels(id) ON DELETE SET NULL;
@@ -229,6 +237,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS channel_models_channel_model_unique_lower ON c
 
 CREATE INDEX IF NOT EXISTS generation_tasks_status_created_idx ON generation_tasks (status, created_at ASC);
 CREATE INDEX IF NOT EXISTS generation_tasks_user_created_idx ON generation_tasks (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS generation_tasks_created_id_idx ON generation_tasks (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS generation_tasks_prompt_search_idx ON generation_tasks USING gin (lower(prompt) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS generation_tasks_model_search_idx ON generation_tasks USING gin (lower(model) gin_trgm_ops);
 CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_request_slot_unique ON generation_tasks (user_id,(parameters->>'requestId'),((parameters->>'requestIndex')::integer)) WHERE parameters ? 'requestId';
 CREATE INDEX IF NOT EXISTS generation_tasks_poll_idx ON generation_tasks (next_poll_at) WHERE status = 'running' AND upstream_task_id IS NOT NULL;
 
@@ -269,6 +280,78 @@ ALTER TABLE generation_attempts ADD COLUMN IF NOT EXISTS concurrency_at_start in
 CREATE INDEX IF NOT EXISTS generation_attempts_task_created_idx ON generation_attempts (task_id, attempt_no);
 UPDATE model_channels SET active_requests = 0 WHERE active_requests <> 0;
 
+CREATE TABLE IF NOT EXISTS generation_daily_metrics (
+    day date PRIMARY KEY,
+    total bigint NOT NULL DEFAULT 0,
+    succeeded bigint NOT NULL DEFAULT 0,
+    failed bigint NOT NULL DEFAULT 0,
+    cancelled bigint NOT NULL DEFAULT 0,
+    points_spent numeric(18,2) NOT NULL DEFAULT 0,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION apply_generation_daily_metric(task generation_tasks, direction integer)
+RETURNS void AS $$
+BEGIN
+    INSERT INTO generation_daily_metrics(day, total, succeeded, failed, cancelled, points_spent, updated_at)
+    VALUES (
+        (task.created_at AT TIME ZONE 'UTC')::date,
+        direction,
+        CASE WHEN task.status = 'succeeded' THEN direction ELSE 0 END,
+        CASE WHEN task.status = 'failed' THEN direction ELSE 0 END,
+        CASE WHEN task.status = 'cancelled' THEN direction ELSE 0 END,
+        CASE WHEN NOT task.points_refunded THEN direction * task.points_cost ELSE 0 END,
+        now()
+    )
+    ON CONFLICT (day) DO UPDATE SET
+        total = generation_daily_metrics.total + EXCLUDED.total,
+        succeeded = generation_daily_metrics.succeeded + EXCLUDED.succeeded,
+        failed = generation_daily_metrics.failed + EXCLUDED.failed,
+        cancelled = generation_daily_metrics.cancelled + EXCLUDED.cancelled,
+        points_spent = generation_daily_metrics.points_spent + EXCLUDED.points_spent,
+        updated_at = now();
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION sync_generation_daily_metrics()
+RETURNS trigger AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        PERFORM apply_generation_daily_metric(OLD, -1);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        PERFORM apply_generation_daily_metric(NEW, 1);
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS generation_daily_metrics_sync ON generation_tasks;
+CREATE TRIGGER generation_daily_metrics_sync
+AFTER INSERT OR UPDATE OR DELETE ON generation_tasks
+FOR EACH ROW EXECUTE FUNCTION sync_generation_daily_metrics();
+
+INSERT INTO generation_daily_metrics(day, total, succeeded, failed, cancelled, points_spent, updated_at)
+SELECT (created_at AT TIME ZONE 'UTC')::date,
+       count(*),
+       count(*) FILTER (WHERE status = 'succeeded'),
+       count(*) FILTER (WHERE status = 'failed'),
+       count(*) FILTER (WHERE status = 'cancelled'),
+       coalesce(sum(points_cost) FILTER (WHERE NOT points_refunded), 0),
+       now()
+FROM generation_tasks
+GROUP BY (created_at AT TIME ZONE 'UTC')::date
+ON CONFLICT (day) DO UPDATE SET
+    total = EXCLUDED.total,
+    succeeded = EXCLUDED.succeeded,
+    failed = EXCLUDED.failed,
+    cancelled = EXCLUDED.cancelled,
+    points_spent = EXCLUDED.points_spent,
+    updated_at = now();
+
 UPDATE channel_models model SET capability_config='{"ratios":["adaptive","21:9","16:9","4:3","1:1","3:4","9:16"],"qualities":["480P","768P","1080P","2K","4K"],"minDuration":4,"maxDuration":30,"modes":["text","frames","reference"],"supportsSound":true,"supportsWatermark":true}'::jsonb
 FROM model_channels channel WHERE channel.id=model.channel_id AND channel.protocol='compshare-minimax-h3' AND model.capability='video' AND model.capability_config='{}'::jsonb;
 
@@ -280,3 +363,24 @@ FROM generation_tasks task WHERE task.asset_id=asset.id AND task.kind='video' AN
 
 CREATE INDEX IF NOT EXISTS media_assets_user_created_idx ON media_assets (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS media_assets_user_kind_created_idx ON media_assets (user_id, kind, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS admin_audit_logs (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    action text NOT NULL,
+    target_type text NOT NULL,
+    target_id text NOT NULL DEFAULT '',
+    before_data jsonb NOT NULL DEFAULT 'null'::jsonb,
+    after_data jsonb NOT NULL DEFAULT 'null'::jsonb,
+    ip_address text NOT NULL DEFAULT '',
+    user_agent text NOT NULL DEFAULT '',
+    request_id text NOT NULL DEFAULT '',
+    succeeded boolean NOT NULL DEFAULT true,
+    status_code integer NOT NULL DEFAULT 200,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS succeeded boolean NOT NULL DEFAULT true;
+ALTER TABLE admin_audit_logs ADD COLUMN IF NOT EXISTS status_code integer NOT NULL DEFAULT 200;
+CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_logs_actor_created_idx ON admin_audit_logs (actor_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS admin_audit_logs_action_created_idx ON admin_audit_logs (action, created_at DESC);

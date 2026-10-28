@@ -6,16 +6,18 @@ import (
 	"net/http"
 	"strconv"
 
+	"nova-creator-platform/services/api/internal/adminaudit"
 	"nova-creator-platform/services/api/internal/adminusers"
 )
 
 type adminUserHandlers struct {
 	service *adminusers.Service
+	audit   *adminaudit.Service
 	logger  *slog.Logger
 }
 
-func newAdminUserHandlers(service *adminusers.Service, logger *slog.Logger) adminUserHandlers {
-	return adminUserHandlers{service: service, logger: logger}
+func newAdminUserHandlers(service *adminusers.Service, audit *adminaudit.Service, logger *slog.Logger) adminUserHandlers {
+	return adminUserHandlers{service: service, audit: audit, logger: logger}
 }
 
 func (handlers adminUserHandlers) List(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +53,7 @@ func (handlers adminUserHandlers) Create(w http.ResponseWriter, r *http.Request)
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "user.create", "user", strconv.FormatInt(user.AccountID, 10), nil, user)
 	writeJSON(w, http.StatusCreated, response{Code: 0, Data: map[string]interface{}{"user": user}, Msg: "用户已创建"})
 }
 
@@ -66,11 +69,17 @@ func (handlers adminUserHandlers) Update(w http.ResponseWriter, r *http.Request)
 		handlers.writeError(w, adminusers.ErrInvalidInput)
 		return
 	}
+	before, err := handlers.service.Get(r.Context(), accountID)
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	user, err := handlers.service.Update(r.Context(), actor.ID, accountID, input)
 	if err != nil {
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "user.update", "user", strconv.FormatInt(accountID, 10), before, user)
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]interface{}{"user": user}, Msg: "用户已更新"})
 }
 
@@ -85,10 +94,16 @@ func (handlers adminUserHandlers) ResetPassword(w http.ResponseWriter, r *http.R
 		handlers.writeError(w, adminusers.ErrInvalidInput)
 		return
 	}
+	target, err := handlers.service.Get(r.Context(), accountID)
+	if err != nil {
+		handlers.writeError(w, err)
+		return
+	}
 	if err := handlers.service.ResetPassword(r.Context(), accountID, input); err != nil {
 		handlers.writeError(w, err)
 		return
 	}
+	recordAdminAudit(handlers.audit, handlers.logger, r, "user.password_reset", "user", strconv.FormatInt(accountID, 10), map[string]interface{}{"username": target.Username}, map[string]bool{"sessionsRevoked": true})
 	writeJSON(w, http.StatusOK, response{Code: 0, Data: map[string]bool{"updated": true}, Msg: "密码已重置"})
 }
 

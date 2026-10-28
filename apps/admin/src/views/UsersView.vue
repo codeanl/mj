@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue"
 import { ElButton, ElDialog, ElInput, ElInputNumber, ElMessage, ElOption, ElPagination, ElSelect } from "element-plus"
-import "element-plus/dist/index.css"
+import "element-plus/es/components/button/style/css"
+import "element-plus/es/components/dialog/style/css"
+import "element-plus/es/components/input/style/css"
+import "element-plus/es/components/input-number/style/css"
+import "element-plus/es/components/message/style/css"
+import "element-plus/es/components/option/style/css"
+import "element-plus/es/components/pagination/style/css"
+import "element-plus/es/components/select/style/css"
 import { Coins, KeyRound, LoaderCircle, Pencil, Search, ShieldCheck, UserPlus, UserRound, UsersRound } from "@lucide/vue"
 
 import * as pointApi from "@/services/points"
@@ -202,7 +209,7 @@ function messageOf(error: unknown, fallback: string) {
             <td><span class="user-status" :class="{ 'is-disabled': user.status === 'disabled' }">{{ statusLabel(user.status) }}</span></td>
             <td><strong class="user-points"><Coins :size="13" />{{ formatPoints(user.pointsBalance) }}</strong></td>
             <td><span>{{ formatDate(user.createdAt) }}</span></td>
-            <td><div class="user-actions"><button type="button" :aria-label="`调整 ${user.username} 积分`" @click="openPoints(user)"><Coins :size="15" /></button><button type="button" :aria-label="`编辑 ${user.username}`" @click="openEdit(user)"><Pencil :size="15" /></button><button type="button" :aria-label="`重置 ${user.username} 密码`" @click="openPassword(user)"><KeyRound :size="15" /></button></div></td>
+            <td><div class="user-actions"><button type="button" :title="`调整 ${user.username} 积分`" :aria-label="`调整 ${user.username} 积分`" @click="openPoints(user)"><Coins :size="15" /></button><button type="button" :title="`编辑 ${user.username}`" :aria-label="`编辑 ${user.username}`" @click="openEdit(user)"><Pencil :size="15" /></button><button type="button" :title="`重置 ${user.username} 密码`" :aria-label="`重置 ${user.username} 密码`" @click="openPassword(user)"><KeyRound :size="15" /></button></div></td>
           </tr>
         </tbody>
       </table>

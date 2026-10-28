@@ -5,9 +5,9 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
-	"image/jpeg"
 	"io"
 
+	"github.com/HugoSmits86/nativewebp"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
@@ -32,7 +32,7 @@ func CreateImageThumbnail(source io.Reader, maximumDimension int) ([]byte, error
 	draw.Draw(destination, destination.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 	xdraw.CatmullRom.Scale(destination, destination.Bounds(), decoded, bounds, draw.Over, nil)
 	var output bytes.Buffer
-	if err := jpeg.Encode(&output, destination, &jpeg.Options{Quality: 82}); err != nil {
+	if err := nativewebp.Encode(&output, destination, &nativewebp.Options{CompressionLevel: nativewebp.DefaultCompression}); err != nil {
 		return nil, err
 	}
 	return output.Bytes(), nil
