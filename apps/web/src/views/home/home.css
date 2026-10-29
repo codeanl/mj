@@ -693,3 +693,37 @@
   .reference-picker__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-inline: 12px; }
   .reference-picker__footer { padding-inline: 12px; }
 }
+
+.creation-confirmation { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 18px; background: rgb(13 17 21 / 58%); }
+.creation-confirmation > section { width: min(460px, 100%); border: 1px solid #dfe4e8; border-radius: 8px; padding: 20px; background: #fff; box-shadow: 0 24px 70px rgb(20 27 35 / 22%); }
+.creation-confirmation header { display: flex; align-items: flex-start; gap: 11px; }
+.creation-confirmation header > span { display: inline-flex; width: 36px; height: 36px; flex: 0 0 36px; align-items: center; justify-content: center; border-radius: 6px; background: #fff7dd; color: #92741d; }
+.creation-confirmation h2 { margin: 0; color: #20262d; font-size: 17px; }
+.creation-confirmation header p { margin: 5px 0 0; color: #818a94; font-size: 11px; }
+.creation-confirmation dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); margin: 18px 0 0; border-top: 1px solid #e3e7eb; border-left: 1px solid #e3e7eb; }
+.creation-confirmation dl > div { padding: 12px; border-right: 1px solid #e3e7eb; border-bottom: 1px solid #e3e7eb; }
+.creation-confirmation dt { color: #8a939d; font-size: 10px; }
+.creation-confirmation dd { margin: 5px 0 0; color: #303740; font-size: 13px; font-weight: 700; }
+.creation-confirmation dd.is-cost { color: #80671f; }
+.creation-confirmation dd.is-insufficient { color: #b03e48; }
+.creation-confirmation__warning { margin: 12px 0 0; border: 1px solid #efc7ca; border-radius: 6px; padding: 9px 11px; background: #fff4f5; color: #ad414a; font-size: 11px; }
+.creation-confirmation footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.creation-confirmation footer button { min-height: 38px; border: 1px solid #d8dde3; border-radius: 6px; padding: 0 15px; background: #fff; color: #59636e; cursor: pointer; }
+.creation-confirmation footer button.is-primary { border-color: #2bad72; background: #2bad72; color: #fff; }
+.creation-confirmation footer button:disabled { cursor: not-allowed; opacity: .5; }
+.app-shell--dark .creation-confirmation > section { border-color: #343d46; background: #171c22; box-shadow: 0 24px 70px rgb(0 0 0 / 42%); }
+.app-shell--dark .creation-confirmation header > span { background: rgb(180 142 35 / 15%); color: #e4c96e; }
+.app-shell--dark .creation-confirmation h2,.app-shell--dark .creation-confirmation dd { color: #eef1f4; }
+.app-shell--dark .creation-confirmation header p,.app-shell--dark .creation-confirmation dt { color: #929ca7; }
+.app-shell--dark .creation-confirmation dl,.app-shell--dark .creation-confirmation dl > div { border-color: #303840; }
+.app-shell--dark .creation-confirmation dd.is-cost { color: #e2c76c; }
+.app-shell--dark .creation-confirmation dd.is-insufficient { color: #f09ba4; }
+.app-shell--dark .creation-confirmation__warning { border-color: #6e3e45; background: rgb(181 59 70 / 12%); color: #f1a2aa; }
+.app-shell--dark .creation-confirmation footer button { border-color: #3a434c; background: #20262d; color: #cbd3d9; }
+.app-shell--dark .creation-confirmation footer button.is-primary { border-color: #2bad72; background: #2bad72; color: #fff; }
+
+@media (max-width: 480px) {
+  .creation-confirmation > section { padding: 16px; }
+  .creation-confirmation dl { grid-template-columns: 1fr; }
+  .creation-confirmation footer { display: grid; grid-template-columns: 1fr 1fr; }
+}

@@ -5,6 +5,7 @@ import { Download, Image, LoaderCircle, Music, Video, X } from "@lucide/vue"
 import * as assetApi from "@/services/assets"
 import { useAssetDownload } from "@/hooks/use-asset-download"
 import { useModalDialog } from "@/hooks/use-modal-dialog"
+import { generationStatusInfo } from "@/lib/generation-status"
 
 const props = defineProps<{ asset: assetApi.Asset; mediaUrl: string }>()
 const emit = defineEmits<{ close: []; recreate: [asset: assetApi.Asset] }>()
@@ -22,6 +23,7 @@ const sourceLabel = computed(() => props.asset.source === "generated" ? "AI 生�
 const statusLabel = computed(() => ({ ready: "已完成", generating: "生成中", needs_review: "等待确认", failed: "失败" })[props.asset.status])
 const videoModeLabel = computed(() => ({ text: "文生视频", frames: "首尾帧", reference: "全能参考", extend: "视频延长", lip_sync: "对口型", edit: "视频编辑", motion_transfer: "动作迁移" })[generation.value?.videoMode || ""] || "未知模式")
 const taskStatusLabel = computed(() => ({ queued: "排队中", running: "生成中", needs_review: "等待确认", succeeded: "已完成", failed: "失败", cancelled: "已取消" })[generation.value?.status || ""] || "未知状态")
+const taskStatus = computed(() => generationStatusInfo(generation.value?.status))
 const canRecreate = computed(() => Boolean(generation.value && (props.asset.type === "image" || props.asset.type === "video")))
 
 watch(() => props.asset.id, () => void loadReferencePreviews(), { immediate: true })
@@ -44,6 +46,8 @@ const detailRows = computed(() => {
   rows.splice(3, 0,
     ["模型", task.model],
     ["任务状态", taskStatusLabel.value],
+	["状态说明", taskStatus.value.description],
+	["费用状态", taskStatus.value.billing],
     ["执行器", task.provider],
     ["渠道", task.channelName || "-"],
     ["协议", task.protocol || task.provider],

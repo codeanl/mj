@@ -123,6 +123,29 @@ type ImageBatch struct {
 	PointsRemaining float64 `json:"pointsRemaining"`
 }
 
+type QuoteInput struct {
+	Type             string `json:"type"`
+	Model            string `json:"model"`
+	Size             string `json:"size"`
+	Quality          string `json:"quality"`
+	Count            int    `json:"count"`
+	DurationSeconds  int    `json:"durationSeconds"`
+	Mode             string `json:"mode"`
+	SoundEnabled     bool   `json:"soundEnabled"`
+	WatermarkEnabled bool   `json:"watermarkEnabled"`
+}
+
+type Quote struct {
+	Type           string  `json:"type"`
+	UnitCost       float64 `json:"unitCost"`
+	Quantity       int     `json:"quantity"`
+	TotalCost      float64 `json:"totalCost"`
+	Balance        float64 `json:"balance"`
+	Remaining      float64 `json:"remaining"`
+	Affordable     bool    `json:"affordable"`
+	PricingSummary string  `json:"pricingSummary"`
+}
+
 type ReferenceImage struct {
 	Content  []byte
 	MimeType string

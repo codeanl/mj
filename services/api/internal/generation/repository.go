@@ -509,8 +509,8 @@ func (repository *Repository) Fail(ctx context.Context, task Task, message strin
 	var cost float64
 	var refunded bool
 	var retryCount int
-	var userID, model, status string
-	if err := tx.QueryRow(ctx, `SELECT user_id::text, model,status,points_cost, points_refunded, retry_count FROM generation_tasks WHERE id = $1 FOR UPDATE`, task.ID).Scan(&userID, &model, &status, &cost, &refunded, &retryCount); err != nil {
+	var userID, model, status, kind string
+	if err := tx.QueryRow(ctx, `SELECT user_id::text, model,status,kind,points_cost, points_refunded, retry_count FROM generation_tasks WHERE id = $1 FOR UPDATE`, task.ID).Scan(&userID, &model, &status, &kind, &cost, &refunded, &retryCount); err != nil {
 		return err
 	}
 	if status == "succeeded" || status == "failed" || status == "cancelled" {
@@ -524,11 +524,15 @@ func (repository *Repository) Fail(ctx context.Context, task Task, message strin
 		if err := tx.QueryRow(ctx, `UPDATE users SET points_balance = points_balance + $2::numeric, updated_at = now() WHERE id = $1 RETURNING points_balance`, userID, cost).Scan(&balance); err != nil {
 			return err
 		}
+		description := "图片生成失败退款"
+		if kind == "video" {
+			description = "视频生成失败退款"
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO point_transactions (id, user_id, type, amount, balance_after, description, model, source_id, idempotency_key)
-			VALUES ($1, $2, 'refund', $3::numeric, $4::numeric, '图片生成失败退款', $5, $6, $7)
+			VALUES ($1, $2, 'refund', $3::numeric, $4::numeric, $5, $6, $7, $8)
 			ON CONFLICT (idempotency_key) DO NOTHING
-		`, uuid.NewString(), userID, cost, balance, model, task.ID, fmt.Sprintf("generation-refund:%s:%d", task.ID, retryCount)); err != nil {
+		`, uuid.NewString(), userID, cost, balance, description, model, task.ID, fmt.Sprintf("generation-refund:%s:%d", task.ID, retryCount)); err != nil {
 			return err
 		}
 		refunded = true

@@ -279,6 +279,8 @@ func applyProviderAuth(request *http.Request, selected modelchannels.ResolvedMod
 	case "none":
 	case "x-api-key":
 		request.Header.Set("x-api-key", selected.APIKey)
+	case "x-goog-api-key":
+		request.Header.Set("x-goog-api-key", selected.APIKey)
 	case "custom-header":
 		header := selected.AdvancedConfig.AuthHeader
 		if header == "" {

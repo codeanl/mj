@@ -74,13 +74,26 @@ func TestOfficialModelConfigRequiresVerifiedCapabilityProfile(t *testing.T) {
 
 func TestVideoCapabilityDefaultsFillImportedModelsFromProtocol(t *testing.T) {
 	config := capabilityConfigForModel("seedance", "video", ModelCapabilityConfig{})
-	if len(config.Ratios) == 0 || len(config.Qualities) == 0 || len(config.Modes) == 0 || config.MinDuration != 4 || config.MaxDuration != 15 {
+	if len(config.Ratios) == 0 || len(config.Qualities) == 0 || len(config.Modes) == 0 || config.MinDuration != 4 || config.MaxDuration != 15 || !config.SupportsSound || !config.SupportsWatermark {
 		t.Fatalf("expected seedance defaults, got %#v", config)
+	}
+	veo := capabilityConfigForModel("gemini", "video", ModelCapabilityConfig{})
+	if veo.SupportsSound || veo.SupportsWatermark || !contains(veo.Modes, "frames") || contains(veo.Modes, "reference") {
+		t.Fatalf("Veo capability must expose only verified controls: %#v", veo)
 	}
 	config = capabilityConfigForModel("compshare-minimax-h3", "video", ModelCapabilityConfig{})
 	if config.MaxDuration != 30 || len(config.Ratios) != 7 || len(config.Modes) != 3 {
 		t.Fatalf("expected official minimax profile, got %#v", config)
 	}
+}
+
+func contains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDurationBoundsParseProtocolRange(t *testing.T) {

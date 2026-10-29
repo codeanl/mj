@@ -50,6 +50,22 @@ export async function getGenerationCapabilities() {
   return response.data.data
 }
 
+export type GenerationQuote = {
+  type: "image" | "video"
+  unitCost: number
+  quantity: number
+  totalCost: number
+  balance: number
+  remaining: number
+  affordable: boolean
+  pricingSummary: string
+}
+
+export async function getGenerationQuote(input: { type: "image" | "video"; model: string; size: string; quality: string; count: number; durationSeconds: number; mode: VideoGenerationMode; soundEnabled: boolean; watermarkEnabled: boolean }) {
+  const response = await http.post<ApiResponse<GenerationQuote>>("/generations/quote", input)
+  return response.data.data
+}
+
 export async function createImageGeneration(input: { requestId: string; prompt: string; model: string; size: string; quality: string; count: number; referenceAssetIds?: string[] }) {
 	const response = await http.post<ApiResponse<ImageGenerationBatch>>("/generations/images", input)
   return response.data.data

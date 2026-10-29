@@ -15,13 +15,14 @@ button { border: 0; }
 .admin-brand small { margin-top: 5px; color: #9299a2; font-size: 9px; }
 .admin-nav { min-height: 0; flex: 1; overflow-y: auto; padding: 14px 10px; }
 .admin-nav section + section { margin-top: 18px; }
-.admin-nav h2 { margin: 0 10px 7px; color: #a2a8b0; font-size: 10px; font-weight: 600; }
-.admin-nav a { display: flex; min-height: 38px; align-items: center; gap: 10px; border-radius: 6px; padding: 0 11px; color: #666e78; font-size: 13px; font-weight: 500; }
+.admin-nav h2 { margin: 0 10px 7px; color: #a2a8b0; font-size: 14px; font-weight: 600; }
+.admin-nav a { display: flex; min-height: 38px; align-items: center; gap: 10px; border-radius: 6px; padding: 0 11px; color: #666e78; font-size: 14px; font-weight: 500; }
 .admin-nav a:hover { background: #f4f5f7; color: #20242a; }
 .admin-nav a.router-link-active { background: #eef0ff; color: #4657dd; }
 .admin-shell--collapsed .admin-nav a { justify-content: center; padding: 0; }
 .admin-user { display: flex; align-items: center; gap: 10px; margin: 10px; border-top: 1px solid #e6e9ed; padding: 16px 7px 6px; }
 .admin-user__avatar { display: inline-flex; width: 32px; height: 32px; flex: 0 0 32px; align-items: center; justify-content: center; border-radius: 50%; background: #1c2229; color: #fff; font-size: 12px; font-weight: 700; }
+.admin-user__avatar img { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .admin-user > span:nth-child(2) { display: flex; min-width: 0; flex-direction: column; }
 .admin-user strong { font-size: 11px; }
 .admin-user small { margin-top: 3px; color: #9aa1aa; font-size: 9px; }

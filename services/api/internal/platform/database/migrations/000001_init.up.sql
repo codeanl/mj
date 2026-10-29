@@ -388,6 +388,38 @@ ON CONFLICT (day) DO UPDATE SET
 UPDATE channel_models model SET capability_config='{"ratios":["adaptive","21:9","16:9","4:3","1:1","3:4","9:16"],"qualities":["480P","768P","1080P","2K","4K"],"minDuration":4,"maxDuration":30,"modes":["text","frames","reference"],"supportsSound":true,"supportsWatermark":true}'::jsonb
 FROM model_channels channel WHERE channel.id=model.channel_id AND channel.protocol='compshare-minimax-h3' AND model.capability='video' AND model.capability_config='{}'::jsonb;
 
+UPDATE channel_models model
+SET capability_config = jsonb_build_object(
+    'ratios', jsonb_build_array('16:9','9:16'),
+    'qualities', jsonb_build_array('720P','1080P'),
+    'minDuration', 4,
+    'maxDuration', 8,
+    'modes', jsonb_build_array('text','frames'),
+    'supportsSound', false,
+    'supportsWatermark', false
+)
+FROM model_channels channel
+WHERE channel.id=model.channel_id AND channel.protocol='gemini' AND model.capability='video' AND NOT model.capability_override;
+
+UPDATE model_channels
+SET advanced_config = jsonb_set(
+    jsonb_set(
+        jsonb_set(advanced_config, '{authMode}', '"x-goog-api-key"'::jsonb, true),
+        '{operationConfigs,video,createPath}', '"/v1beta/models/:model:predictLongRunning"'::jsonb, true
+    ),
+    '{operationConfigs,video,queryPath}', '"/v1beta/:task_path"'::jsonb, true
+)
+WHERE protocol='gemini';
+
+UPDATE model_channels
+SET advanced_config = jsonb_set(
+    advanced_config,
+    '{operationConfigs,video,requestTemplate}',
+    to_jsonb('{"model":"{{model}}","content":"{{content}}","ratio":"{{ratio}}","resolution":"{{resolution}}","duration":"{{duration}}","generate_audio":"{{generate_audio}}","watermark":"{{watermark}}"}'::text),
+    true
+)
+WHERE protocol IN ('seedance','volcengine-video');
+
 UPDATE generation_tasks
 SET status='running',next_poll_at=now(),review_reason=NULL,error_message=NULL
 WHERE kind='video' AND status='needs_review' AND upstream_task_id IS NOT NULL AND upstream_task_id<>'' AND channel_id IS NOT NULL;

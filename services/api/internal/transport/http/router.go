@@ -116,6 +116,7 @@ func NewRouter(runtimeContext context.Context, cfg config.Config, logger *slog.L
 			protected.Get("/points", pointHTTP.Wallet)
 			protected.Post("/cdk/redeem", cdkHTTP.Redeem)
 			protected.Get("/generations/capabilities", generationHTTP.GetCapabilities)
+			protected.Post("/generations/quote", generationHTTP.Quote)
 			protected.Post("/generations/images", generationHTTP.CreateImage)
 			protected.Post("/generations/videos", generationHTTP.CreateVideo)
 			protected.Get("/generations/{id}", generationHTTP.GetTask)

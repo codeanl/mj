@@ -7,6 +7,7 @@ export const useAdminAuthStore = defineStore("admin-auth", {
   state: () => ({
     token: localStorage.getItem(ADMIN_ACCESS_TOKEN_KEY) || "",
     user: null as authApi.AdminUser | null,
+    avatarObjectUrl: "",
     initialized: false,
   }),
   getters: {
@@ -23,6 +24,7 @@ export const useAdminAuthStore = defineStore("admin-auth", {
         const user = await authApi.currentUser()
         if (user.role !== "admin") throw new Error("需要管理员权限")
         this.user = user
+        await this.refreshAvatar()
       } catch {
         this.clearSession()
       } finally {
@@ -36,12 +38,27 @@ export const useAdminAuthStore = defineStore("admin-auth", {
       this.user = result.user
       this.initialized = true
       localStorage.setItem(ADMIN_ACCESS_TOKEN_KEY, result.accessToken)
+      void this.refreshAvatar()
     },
     clearSession() {
       this.token = ""
       this.user = null
+      this.revokeAvatar()
       this.initialized = true
       localStorage.removeItem(ADMIN_ACCESS_TOKEN_KEY)
+    },
+    async refreshAvatar() {
+      this.revokeAvatar()
+      if (!this.user?.avatarUrl) return
+      try {
+        this.avatarObjectUrl = URL.createObjectURL(await authApi.getAvatar())
+      } catch {
+        this.avatarObjectUrl = ""
+      }
+    },
+    revokeAvatar() {
+      if (this.avatarObjectUrl) URL.revokeObjectURL(this.avatarObjectUrl)
+      this.avatarObjectUrl = ""
     },
     async logout() {
       try {

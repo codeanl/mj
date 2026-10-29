@@ -76,6 +76,21 @@ func newGenerationHandlers(service *generation.Service, adminGenerations *adming
 	return generationHandlers{service: service, adminGenerations: adminGenerations, recovery: recovery, logger: logger}
 }
 
+func (handlers generationHandlers) Quote(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	var input generation.QuoteInput
+	if decodeJSON(r, &input) != nil {
+		handlers.writeGenerationError(w, generation.ErrUnsupportedOptions)
+		return
+	}
+	quote, err := handlers.service.Quote(r.Context(), user.ID, input)
+	if err != nil {
+		handlers.writeGenerationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: 0, Data: quote, Msg: "报价成功"})
+}
+
 func (handlers generationHandlers) Check(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUser(r.Context())
 	if !ok {

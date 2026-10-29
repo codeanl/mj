@@ -137,10 +137,13 @@ scripts\package-desktop.cmd https://api.example.com
 
 - `GET /api/v1/models`：读取启用渠道中的启用模型，支持 `capability=text|image|video|audio` 定向查询。
 - `GET /api/v1/generations/capabilities`：读取图片生成可用模型、比例和分辨率。
+- `POST /api/v1/generations/quote`：按实际模型积分规则返回单价、预计总积分、当前余额和生成后余额，不创建任务或扣费。
 - `POST /api/v1/generations/images`：提交 `prompt`、`model`、`size` 和 `quality` 创建图片任务。
 - `GET /api/v1/generations/{id}`：读取当前用户的生成任务状态。
 
-生成任务保存稳定的渠道、模型和参考素材角色。Worker 按渠道协议、鉴权和高级路径调用上游；当前原生执行 OpenAI 兼容图片、Stable Diffusion 图片以及 CompShare MiniMax H3 视频协议，MiniMax H3 支持文生视频、首尾帧和图片/视频/音频全能参考。
+生成任务保存稳定的渠道、模型和参考素材角色。Worker 按渠道协议、鉴权和高级路径调用上游；当前原生执行 OpenAI 兼容图片、Stable Diffusion 图片、OpenAI 视频、Seedance、火山方舟、Google Veo、CompShare MiniMax H3 及声明式异步视频协议。Seedance、火山和 MiniMax 支持文生视频、首尾帧与协议声明的多模态参考；Veo 支持文生视频和首尾帧长任务。
+
+客户端在上传参考素材和创建任务前调用报价接口显示费用确认；任务中心统一展示排队、生成中、等待确认、成功、失败和取消状态，并提供原任务检查、取消和失败重试。等待确认不会重建上游任务或重复扣费，明确失败和取消会按任务流水自动退款。
 
 首页提交图片任务后保持在当前创作页，并立即把任务加入“最近创作”。列表仅在存在生成中记录时按 `VITE_GENERATION_REFRESH_INTERVAL_MS` 静默刷新，完成或失败后自动停止；刷新期间复用未变化的媒体预览，不替换为加载骨架。
 

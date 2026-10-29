@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue"
 import { useRouter } from "vue-router"
+import { ElMessageBox } from "element-plus"
+import "element-plus/es/components/message-box/style/css"
 import {
 	Activity,
   Bot,
@@ -41,6 +43,32 @@ async function logout() {
     await router.replace("/login")
   }
 }
+
+function currentUsername() {
+  return auth.user?.username || "平台管理员"
+}
+
+function currentUserInitial() {
+  return currentUsername().charAt(0).toUpperCase() || "A"
+}
+
+async function requestLogout() {
+  try {
+    await ElMessageBox.confirm(
+      "确认退出当前管理账号？",
+      "退出登录",
+      {
+        type: "warning",
+        confirmButtonText: "退出登录",
+        cancelButtonText: "取消",
+        customClass: "admin-logout-message-box",
+      },
+    )
+  } catch {
+    return
+  }
+  await logout()
+}
 </script>
 
 <template>
@@ -63,9 +91,12 @@ async function logout() {
       </nav>
 
       <div class="admin-user">
-        <span class="admin-user__avatar">{{ auth.user?.username?.charAt(0).toUpperCase() || "A" }}</span>
-        <span v-if="!collapsed"><strong>{{ auth.user?.username || "平台管理员" }}</strong><small>管理员</small></span>
-        <button v-if="!collapsed" class="icon-button" type="button" aria-label="退出登录" @click="logout"><LogOut :size="16" /></button>
+        <span class="admin-user__avatar">
+          <img v-if="auth.avatarObjectUrl" :src="auth.avatarObjectUrl" alt="" @error="auth.revokeAvatar()" />
+          <span v-else>{{ currentUserInitial() }}</span>
+        </span>
+        <span v-if="!collapsed"><strong>{{ currentUsername() }}</strong><small>管理员</small></span>
+        <button v-if="!collapsed" class="icon-button" type="button" aria-label="退出登录" @click="requestLogout"><LogOut :size="16" /></button>
       </div>
     </aside>
 

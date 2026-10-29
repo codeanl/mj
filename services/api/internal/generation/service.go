@@ -3,6 +3,8 @@ package generation
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -149,6 +151,95 @@ func (service *Service) CreateVideo(ctx context.Context, input CreateVideoInput)
 		return VideoBatch{}, err
 	}
 	return VideoBatch{Tasks: []Task{task}, PointsRemaining: remaining}, nil
+}
+
+func (service *Service) Quote(ctx context.Context, userID string, input QuoteInput) (Quote, error) {
+	if userID == "" {
+		return Quote{}, ErrInvalidPrompt
+	}
+	balance, err := service.points.Balance(ctx, userID)
+	if err != nil {
+		return Quote{}, err
+	}
+	var unitCost float64
+	quantity := 1
+	summary := ""
+	switch input.Type {
+	case "image":
+		count, ok := normalizeImageCount(input.Count)
+		if !ok {
+			return Quote{}, ErrInvalidImageCount
+		}
+		selected, resolveErr := service.channels.ResolveImageModel(ctx, "", input.Model)
+		if resolveErr != nil {
+			return Quote{}, ErrProviderUnavailable
+		}
+		options, ok := resolveImageOptions(CreateImageInput{Model: input.Model, Size: input.Size, Quality: input.Quality}, selected.UpstreamModel)
+		if !ok {
+			return Quote{}, ErrUnsupportedOptions
+		}
+		unitCost, err = service.points.GenerationCost(ctx, input.Model, "image", options.Resolution)
+		if err != nil {
+			return Quote{}, err
+		}
+		quantity = count
+		summary = fmt.Sprintf("%d 张图片 × %s", count, options.Resolution)
+	case "video":
+		models, listErr := service.channels.PublicModels(ctx, "video")
+		if listErr != nil {
+			return Quote{}, listErr
+		}
+		var config modelchannels.ModelCapabilityConfig
+		found := false
+		for _, model := range models {
+			if strings.EqualFold(model.ID, input.Model) {
+				config = model.CapabilityConfig
+				found = true
+				break
+			}
+		}
+		if !found {
+			return Quote{}, ErrProviderUnavailable
+		}
+		ratio, resolution, seconds, mode := strings.TrimSpace(input.Size), strings.ToUpper(strings.TrimSpace(input.Quality)), input.DurationSeconds, strings.TrimSpace(input.Mode)
+		if ratio == "" {
+			ratio = "16:9"
+		}
+		if resolution == "" {
+			resolution = "768P"
+		}
+		if seconds == 0 {
+			seconds = 5
+		}
+		if mode == "" {
+			mode = VideoModeText
+		}
+		if len(config.Ratios) == 0 {
+			config.Ratios = []string{"21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "adaptive"}
+		}
+		if len(config.Qualities) == 0 {
+			config.Qualities = []string{"480P", "768P", "1080P", "2K", "4K"}
+		}
+		if config.MinDuration <= 0 {
+			config.MinDuration = 4
+		}
+		if config.MaxDuration <= 0 {
+			config.MaxDuration = 30
+		}
+		if (len(config.Modes) > 0 && !containsFold(config.Modes, mode)) || (input.SoundEnabled && !config.SupportsSound) || (input.WatermarkEnabled && !config.SupportsWatermark) || !containsFold(config.Ratios, ratio) || !containsFold(config.Qualities, resolution) || seconds < config.MinDuration || seconds > config.MaxDuration {
+			return Quote{}, ErrUnsupportedOptions
+		}
+		unitCost, err = service.points.VideoGenerationCost(ctx, input.Model, resolution, seconds)
+		if err != nil {
+			return Quote{}, err
+		}
+		summary = fmt.Sprintf("%d 秒视频 × %s", seconds, resolution)
+	default:
+		return Quote{}, ErrUnsupportedOptions
+	}
+	total := math.Round(unitCost*float64(quantity)*100) / 100
+	remaining := math.Round((balance-total)*100) / 100
+	return Quote{Type: input.Type, UnitCost: unitCost, Quantity: quantity, TotalCost: total, Balance: balance, Remaining: remaining, Affordable: remaining >= 0, PricingSummary: summary}, nil
 }
 
 func containsFold(values []string, value string) bool {

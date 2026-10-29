@@ -399,14 +399,14 @@ func capabilityConfigForModel(protocol, capability string, config ModelCapabilit
 	config.Qualities = []string{"480P", "768P", "1080P", "2K", "4K"}
 	config.MinDuration, config.MaxDuration = durationBounds(operation.DurationRange)
 	config.Modes = []string{"text"}
-	if operation.SupportsReferenceImage {
+	if operation.SupportsReferenceImage && (protocol == "gemini" || operation.SupportsReferenceVideo || operation.SupportsReferenceAudio) {
 		config.Modes = append(config.Modes, "frames")
 	}
-	if operation.SupportsReferenceImage || operation.SupportsReferenceVideo || operation.SupportsReferenceAudio {
+	if operation.SupportsReferenceVideo || operation.SupportsReferenceAudio {
 		config.Modes = append(config.Modes, "reference")
 	}
-	config.SupportsSound = true
-	config.SupportsWatermark = true
+	config.SupportsSound = strings.Contains(operation.RequestTemplate, "generate_audio") || protocol == "compshare-minimax-h3"
+	config.SupportsWatermark = strings.Contains(operation.RequestTemplate, "watermark") || protocol == "compshare-minimax-h3"
 	return config
 }
 
@@ -644,6 +644,8 @@ func applyAuth(request *http.Request, advanced AdvancedConfig, definition Protoc
 	case "none":
 	case "x-api-key":
 		request.Header.Set("x-api-key", apiKey)
+	case "x-goog-api-key":
+		request.Header.Set("x-goog-api-key", apiKey)
 	case "custom-header":
 		header := advanced.AuthHeader
 		if header == "" && definition.ID == "gemini" {

@@ -8,6 +8,7 @@ import {
   Coins,
   House,
   LogOut,
+  ListChecks,
   Menu,
   Moon,
   Sun,
@@ -32,6 +33,7 @@ useModalDialog(logoutConfirmationOpen, logoutDialogPanel, cancelLogout)
 const primaryNavigation = [
   { label: "创作", path: "/", icon: House },
   { label: "素材", path: "/assets", icon: Boxes },
+  { label: "任务中心", path: "/tasks", icon: ListChecks },
   { label: "个人中心", path: "/profile", icon: CircleUserRound },
 ]
 

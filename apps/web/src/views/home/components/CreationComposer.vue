@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useDebounceFn } from "@vueuse/core"
-import { ArrowRight, ChevronDown, Image, LoaderCircle, Music, Paperclip, Plus, RefreshCcw, Sparkles, Type, Video, X } from "@lucide/vue"
+import { ArrowRight, ChevronDown, Coins, Image, LoaderCircle, Music, Paperclip, Plus, RefreshCcw, Sparkles, Type, Video, X } from "@lucide/vue"
 
 import ReferencePickerDialog from "./ReferencePickerDialog.vue"
 import * as assetApi from "@/services/assets"
-import { createImageGeneration, createVideoGeneration, type GenerationCapabilities, type VideoGenerationMode, type VideoReferenceRole } from "@/services/generation"
+import { createImageGeneration, createVideoGeneration, getGenerationQuote, type GenerationCapabilities, type GenerationQuote, type VideoGenerationMode, type VideoReferenceRole } from "@/services/generation"
+import { useModalDialog } from "@/hooks/use-modal-dialog"
 import { apiErrorMessage } from "@/services/http"
 import { listImageModels, listVideoModels, type PublicModel } from "@/services/models"
 import { notification } from "@/services/notifications"
@@ -83,6 +84,10 @@ const referencePickerPage = ref(0)
 const referencePickerTotal = ref(0)
 const referencePickerLoadedCount = ref(0)
 const creating = ref(false)
+const quoting = ref(false)
+const quote = ref<GenerationQuote | null>(null)
+const quoteOpen = ref(false)
+const quotePanel = ref<HTMLElement | null>(null)
 const draftRestored = ref(false)
 const pendingRequestId = ref("")
 const pendingRequestSignature = ref("")
@@ -91,6 +96,8 @@ const videoModelsLoading = ref(true)
 const imageModelsFailed = ref(false)
 const videoModelsFailed = ref(false)
 let referencePickerLoadSequence = 0
+
+useModalDialog(quoteOpen, quotePanel, () => { quoteOpen.value = false })
 
 const currentCapability = computed(() => capabilities.value[activeType.value])
 const modelsLoading = computed(() => activeType.value === "video" ? videoModelsLoading.value : imageModelsLoading.value)
@@ -169,43 +176,67 @@ function changeVideoMode(event: Event) {
   selectVideoMode((event.target as HTMLSelectElement).value as VideoGenerationMode)
 }
 
-async function startCreation() {
-  if (!prompt.value.trim() && (activeType.value === "image" || videoMode.value === "text")) {
-    notification.info("先写下你的创作想法")
-    return
-  }
+function validateCreation() {
+	if (!prompt.value.trim() && (activeType.value === "image" || videoMode.value === "text")) {
+		notification.info("先写下你的创作想法")
+		return false
+	}
   if (activeType.value === "video" && videoMode.value === "frames") {
     const firstFrame = references.value.find((reference) => reference.role === "first_frame")
     const lastFrame = references.value.find((reference) => reference.role === "last_frame")
-    if (!firstFrame || !lastFrame || firstFrame.key === lastFrame.key) {
-      notification.info("请分别添加不同的首帧和尾帧")
-      return
-    }
-  } else if (activeType.value === "video" && videoMode.value !== "text" && references.value.length === 0) {
-    notification.info("请添加参考素材")
-    return
-  }
+		if (!firstFrame || !lastFrame || firstFrame.key === lastFrame.key) {
+			notification.info("请分别添加不同的首帧和尾帧")
+			return false
+		}
+	} else if (activeType.value === "video" && videoMode.value !== "text" && references.value.length === 0) {
+		notification.info("请添加参考素材")
+		return false
+	}
   if (activeType.value === "video" && videoMode.value === "reference" && references.value.every((reference) => reference.kind === "audio")) {
-    notification.info("参考音频需要同时添加至少一张图片或一个视频")
-    return
+		notification.info("参考音频需要同时添加至少一张图片或一个视频")
+		return false
   }
   if (activeType.value === "video" && videoMode.value === "lip_sync" && (!references.value.some((item) => item.kind === "video") || !references.value.some((item) => item.kind === "audio"))) {
-    notification.info("对口型需要同时选择视频和音频")
-    return
+		notification.info("对口型需要同时选择视频和音频")
+		return false
   }
   if (activeType.value === "video" && ["extend", "edit"].includes(videoMode.value) && !references.value.some((item) => item.kind === "video")) {
-    notification.info("请选择一个视频素材")
-    return
+		notification.info("请选择一个视频素材")
+		return false
   }
   if (activeType.value === "video" && videoMode.value === "motion_transfer" && (!references.value.some((item) => item.kind === "video") || !references.value.some((item) => item.kind === "image"))) {
-    notification.info("动作迁移需要人物图片和动作视频")
-    return
+		notification.info("动作迁移需要人物图片和动作视频")
+		return false
   }
   if (!selectedModel.value) {
-    notification.warning(`当前没有可用的${activeType.value === "video" ? "视频" : "图片"}模型，请联系管理员配置模型渠道`)
-    return
-  }
-  if (creating.value) return
+		notification.warning(`当前没有可用的${activeType.value === "video" ? "视频" : "图片"}模型，请联系管理员配置模型渠道`)
+		return false
+	}
+	return true
+}
+
+async function requestCreation() {
+	if (!validateCreation() || quoting.value || creating.value) return
+	quoting.value = true
+	try {
+		quote.value = await getGenerationQuote({ type: activeType.value, model: selectedModel.value, size: selectedSize.value, quality: selectedQuality.value, count: selectedCount.value, durationSeconds: selectedDuration.value, mode: videoMode.value, soundEnabled: soundEnabled.value, watermarkEnabled: watermarkEnabled.value })
+		quoteOpen.value = true
+	} catch (error) {
+		notification.error(apiErrorMessage(error, "费用计算失败"))
+	} finally {
+		quoting.value = false
+	}
+}
+
+async function confirmCreation() {
+	quoteOpen.value = false
+	await nextTick()
+	await submitCreation()
+}
+
+async function submitCreation() {
+	if (!validateCreation()) return
+	if (creating.value) return
   creating.value = true
   try {
     const submittedPrompt = prompt.value.trim()
@@ -321,6 +352,10 @@ function referenceKindAllowed(kind: ReferenceKind) {
   if (videoMode.value === "motion_transfer" && kind === "audio") return false
   const maximum = { image: videoMode.value === "reference" ? 9 : referenceLimit.value, video: 3, audio: 3 }[kind]
   return references.value.filter((reference) => reference.kind === kind).length < maximum && references.value.length < referenceLimit.value
+}
+
+function formatPoints(value: number) {
+	return Number(value || 0).toLocaleString("zh-CN", { maximumFractionDigits: 2 })
 }
 
 async function loadReferencePickerAssets(options: { append?: boolean } = {}) {
@@ -584,10 +619,24 @@ defineExpose({ useSameParameters })
             <label v-if="activeType === 'video'" class="compact-toggle" :class="{ 'is-disabled': selectedVideoProfile?.supportsSound === false }"><input v-model="soundEnabled" type="checkbox" :disabled="selectedVideoProfile?.supportsSound === false" /><span>{{ soundEnabled ? "有声音" : "无声音" }}</span></label>
             <label v-if="activeType === 'video'" class="compact-toggle" :class="{ 'is-disabled': selectedVideoProfile?.supportsWatermark === false }"><input v-model="watermarkEnabled" type="checkbox" :disabled="selectedVideoProfile?.supportsWatermark === false" /><span>{{ watermarkEnabled ? "有水印" : "无水印" }}</span></label>
           </div>
-          <button class="create-button" type="button" aria-label="开始生成" :disabled="creating || modelsLoading || !selectedModel" @click="startCreation"><LoaderCircle v-if="creating" class="spin" :size="18" /><Sparkles v-else :size="18" /><span>{{ creating ? "提交中" : "开始生成" }}</span><ArrowRight :size="17" /></button>
+          <button class="create-button" type="button" aria-label="开始生成" :disabled="creating || quoting || modelsLoading || !selectedModel" @click="requestCreation"><LoaderCircle v-if="creating || quoting" class="spin" :size="18" /><Sparkles v-else :size="18" /><span>{{ creating ? "提交中" : quoting ? "计费中" : "开始生成" }}</span><ArrowRight :size="17" /></button>
         </div>
       </div>
     </div>
+  </div>
+
+  <div v-if="quoteOpen && quote" class="creation-confirmation" @click.self="quoteOpen = false">
+    <section ref="quotePanel" role="dialog" aria-modal="true" aria-label="确认生成费用" tabindex="-1">
+      <header><span><Coins :size="19" /></span><div><h2>确认生成费用</h2><p>确认后才会上传参考素材并创建生成任务。</p></div></header>
+      <dl>
+        <div><dt>生成内容</dt><dd>{{ quote.pricingSummary }}</dd></div>
+        <div><dt>预计消耗</dt><dd class="is-cost">{{ formatPoints(quote.totalCost) }} 积分</dd></div>
+        <div><dt>当前余额</dt><dd>{{ formatPoints(quote.balance) }} 积分</dd></div>
+        <div><dt>生成后余额</dt><dd :class="{ 'is-insufficient': !quote.affordable }">{{ formatPoints(quote.remaining) }} 积分</dd></div>
+      </dl>
+      <p v-if="!quote.affordable" class="creation-confirmation__warning">积分余额不足，请先兑换 CDK 或联系管理员充值。</p>
+      <footer><button type="button" data-dialog-initial-focus @click="quoteOpen = false">取消</button><button class="is-primary" type="button" :disabled="!quote.affordable || creating" @click="confirmCreation"><LoaderCircle v-if="creating" class="spin" :size="15" />确认生成</button></footer>
+    </section>
   </div>
 
   <ReferencePickerDialog

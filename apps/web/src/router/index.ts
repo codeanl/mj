@@ -6,6 +6,7 @@ import { pinia } from "@/stores"
 const workspaceRoutes: Array<RouteRecordRaw> = [
   { path: "", name: "home", component: () => import("@/views/HomeView.vue"), meta: { title: "创作" } },
   { path: "assets", name: "assets", component: () => import("@/views/AssetsView.vue"), meta: { title: "素材" } },
+  { path: "tasks", name: "tasks", component: () => import("@/views/TasksView.vue"), meta: { title: "任务中心" } },
   { path: "profile", name: "profile", component: () => import("@/views/ProfileView.vue"), meta: { title: "个人中心" } },
 ]
 

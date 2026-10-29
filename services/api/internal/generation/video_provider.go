@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,7 +40,7 @@ func (provider *MiniMaxH3VideoProvider) Create(ctx context.Context, task Task, s
 		return provider.createConfiguredMode(ctx, task, selected, references)
 	}
 	if selected.Protocol != "compshare-minimax-h3" {
-		return GeneratedVideo{}, ErrProviderUnavailable
+		return provider.createConfiguredVideo(ctx, task, selected, references)
 	}
 	content := []map[string]interface{}{}
 	if task.Prompt != "" {
@@ -95,6 +97,9 @@ func (provider *MiniMaxH3VideoProvider) Query(ctx context.Context, task Task, se
 	if isSpecialVideoMode(task.VideoMode) {
 		return provider.queryConfiguredMode(ctx, task, selected)
 	}
+	if selected.Protocol != "" && selected.Protocol != "compshare-minimax-h3" {
+		return provider.queryConfiguredVideo(ctx, task, selected)
+	}
 	path := "/minimax/v2/query/video_generation/" + url.PathEscape(task.UpstreamTaskID)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(selected.BaseURL, "/")+path, nil)
 	if err != nil {
@@ -143,31 +148,8 @@ func (provider *MiniMaxH3VideoProvider) Query(ctx context.Context, task Task, se
 }
 
 func (provider *MiniMaxH3VideoProvider) Cancel(ctx context.Context, task Task, selected modelchannels.ResolvedModel) error {
-	if isSpecialVideoMode(task.VideoMode) {
-		operation := selected.CapabilityConfig.ModeOperations[task.VideoMode]
-		if operation.CancelPath == "" {
-			return ErrProviderUnavailable
-		}
-		path := replaceTaskPath(operation.CancelPath, selected.UpstreamModel, task.UpstreamTaskID)
-		method := strings.ToUpper(operation.CancelMethod)
-		if method == "" {
-			method = http.MethodPost
-		}
-		request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(selected.BaseURL, "/")+"/"+strings.TrimLeft(path, "/"), nil)
-		if err != nil {
-			return err
-		}
-		applyProviderAuth(request, selected)
-		response, err := provider.client.Do(request)
-		if err != nil {
-			return err
-		}
-		defer response.Body.Close()
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			status := response.StatusCode
-			return &ExecutionError{Err: fmt.Errorf("video cancel returned status %d", status), Path: path, HTTPStatus: &status}
-		}
-		return nil
+	if isSpecialVideoMode(task.VideoMode) || selected.Protocol != "compshare-minimax-h3" {
+		return provider.cancelConfiguredVideo(ctx, task, selected, configuredVideoOperation(selected, task.VideoMode))
 	}
 	if selected.Protocol != "compshare-minimax-h3" || task.UpstreamTaskID == "" {
 		return ErrProviderUnavailable
@@ -197,24 +179,49 @@ func isSpecialVideoMode(mode string) bool {
 }
 
 func (provider *MiniMaxH3VideoProvider) createConfiguredMode(ctx context.Context, task Task, selected modelchannels.ResolvedModel, references []*ReferenceImage) (GeneratedVideo, error) {
-	operation := selected.CapabilityConfig.ModeOperations[task.VideoMode]
+	return provider.createConfiguredOperation(ctx, task, selected, references, configuredVideoOperation(selected, task.VideoMode))
+}
+
+func (provider *MiniMaxH3VideoProvider) createConfiguredVideo(ctx context.Context, task Task, selected modelchannels.ResolvedModel, references []*ReferenceImage) (GeneratedVideo, error) {
+	operation := configuredVideoOperation(selected, task.VideoMode)
+	for _, reference := range references {
+		kind := reference.Kind
+		if kind == "" {
+			kind = strings.SplitN(reference.MimeType, "/", 2)[0]
+		}
+		if (kind == "image" && !operation.SupportsReferenceImage) || (kind == "video" && !operation.SupportsReferenceVideo) || (kind == "audio" && !operation.SupportsReferenceAudio) {
+			return GeneratedVideo{}, ErrInvalidVideoReference
+		}
+	}
+	return provider.createConfiguredOperation(ctx, task, selected, references, operation)
+}
+
+func (provider *MiniMaxH3VideoProvider) createConfiguredOperation(ctx context.Context, task Task, selected modelchannels.ResolvedModel, references []*ReferenceImage, operation modelchannels.OperationConfig) (GeneratedVideo, error) {
 	if operation.CreatePath == "" || operation.QueryPath == "" {
 		return GeneratedVideo{}, ErrProviderUnavailable
 	}
-	content := make([]map[string]interface{}, 0, len(references))
+	content := make([]map[string]interface{}, 0, len(references)+1)
+	if task.Prompt != "" {
+		content = append(content, map[string]interface{}{"type": "text", "text": task.Prompt})
+	}
 	images := make([]string, 0)
 	videos := make([]string, 0)
 	audios := make([]string, 0)
+	imageBase64, imageMimeType := "", ""
 	for _, reference := range references {
 		kind := reference.Kind
 		if kind == "" {
 			kind = strings.SplitN(reference.MimeType, "/", 2)[0]
 		}
 		dataURL := "data:" + reference.MimeType + ";base64," + base64.StdEncoding.EncodeToString(reference.Content)
-		content = append(content, map[string]interface{}{"type": kind + "_url", "role": reference.Role, "url": dataURL})
+		content = append(content, map[string]interface{}{"type": kind + "_url", "role": reference.Role, kind + "_url": map[string]string{"url": dataURL}})
 		switch kind {
 		case "image":
 			images = append(images, dataURL)
+			if imageBase64 == "" {
+				imageBase64 = base64.StdEncoding.EncodeToString(reference.Content)
+				imageMimeType = reference.MimeType
+			}
 		case "video":
 			videos = append(videos, dataURL)
 		case "audio":
@@ -227,18 +234,19 @@ func (provider *MiniMaxH3VideoProvider) createConfiguredMode(ctx context.Context
 		"generate_audio": task.SoundEnabled, "watermark": task.WatermarkEnabled,
 		"content": content, "images": images, "videos": videos, "audios": audios,
 		"image": firstString(images), "video": firstString(videos), "audio": firstString(audios),
+		"image_base64": imageBase64, "image_mime_type": imageMimeType,
 	}
-	payload, err := configuredVideoPayload(operation.RequestTemplate, values)
+	payload, contentType, err := configuredVideoRequest(task, selected, references, operation, values)
 	if err != nil {
 		return GeneratedVideo{}, err
 	}
 	path := replaceTaskPath(operation.CreatePath, selected.UpstreamModel, "")
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(selected.BaseURL, "/")+"/"+strings.TrimLeft(path, "/"), bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(selected.BaseURL, "/")+"/"+strings.TrimLeft(path, "/"), payload)
 	if err != nil {
 		return GeneratedVideo{}, err
 	}
 	applyProviderAuth(request, selected)
-	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", contentType)
 	request.Header.Set("Idempotency-Key", "nova-video:"+task.ID+fmt.Sprintf(":%d", task.retryCount))
 	response, err := provider.client.Do(request)
 	if err != nil {
@@ -254,7 +262,7 @@ func (provider *MiniMaxH3VideoProvider) createConfiguredMode(ctx context.Context
 	if json.Unmarshal(body, &value) != nil {
 		return GeneratedVideo{}, errors.New("configured video operation returned invalid JSON")
 	}
-	id := firstJSONText(value, "task_id", "id", "data.task_id", "data.id", "task.id")
+	id := firstJSONText(value, "task_id", "id", "name", "data.task_id", "data.id", "data.taskId", "task.id", "metadata.task_id")
 	if id == "" {
 		return GeneratedVideo{}, errors.New("configured video operation returned no task id")
 	}
@@ -262,7 +270,14 @@ func (provider *MiniMaxH3VideoProvider) createConfiguredMode(ctx context.Context
 }
 
 func (provider *MiniMaxH3VideoProvider) queryConfiguredMode(ctx context.Context, task Task, selected modelchannels.ResolvedModel) (GeneratedVideo, error) {
-	operation := selected.CapabilityConfig.ModeOperations[task.VideoMode]
+	return provider.queryConfiguredOperation(ctx, task, selected, configuredVideoOperation(selected, task.VideoMode))
+}
+
+func (provider *MiniMaxH3VideoProvider) queryConfiguredVideo(ctx context.Context, task Task, selected modelchannels.ResolvedModel) (GeneratedVideo, error) {
+	return provider.queryConfiguredOperation(ctx, task, selected, configuredVideoOperation(selected, task.VideoMode))
+}
+
+func (provider *MiniMaxH3VideoProvider) queryConfiguredOperation(ctx context.Context, task Task, selected modelchannels.ResolvedModel, operation modelchannels.OperationConfig) (GeneratedVideo, error) {
 	if operation.QueryPath == "" {
 		return GeneratedVideo{}, ErrProviderUnavailable
 	}
@@ -294,17 +309,20 @@ func (provider *MiniMaxH3VideoProvider) queryConfiguredMode(ctx context.Context,
 	if status == "" {
 		status = strings.ToLower(firstJSONText(value, "task.status", "data.status"))
 	}
-	if status == "failed" || status == "error" || status == "cancelled" {
+	if status == "failed" || status == "error" || status == "cancelled" || (status == "true" && firstJSONText(value, "error.message", "error", "message") != "") {
 		return GeneratedVideo{Failed: true, Error: firstJSONText(value, "error", "message", "task.error", "data.error")}, nil
 	}
-	if status != "succeeded" && status != "success" && status != "completed" && status != "done" {
+	if status != "succeeded" && status != "success" && status != "completed" && status != "done" && status != "true" {
 		return GeneratedVideo{UpstreamTaskID: task.UpstreamTaskID, Pending: true}, nil
 	}
 	resultField := operation.ResultField
 	if resultField == "" {
 		resultField = "result_url"
 	}
-	rawURL := jsonText(value, resultField)
+	rawURL := configuredResultText(value, resultField)
+	if rawURL == "" && strings.HasPrefix(resultField, "/") {
+		rawURL = strings.TrimRight(selected.BaseURL, "/") + replaceTaskPath(resultField, selected.UpstreamModel, task.UpstreamTaskID)
+	}
 	if rawURL == "" {
 		rawURL = firstJSONText(value, "video_url", "data.video_url", "result.url", "content.video_url")
 	}
@@ -314,10 +332,125 @@ func (provider *MiniMaxH3VideoProvider) queryConfiguredMode(ctx context.Context,
 	return provider.download(ctx, rawURL, selected)
 }
 
+func configuredVideoOperation(selected modelchannels.ResolvedModel, mode string) modelchannels.OperationConfig {
+	if isSpecialVideoMode(mode) {
+		operation := selected.CapabilityConfig.ModeOperations[mode]
+		return modelchannels.OperationConfig{CreatePath: operation.CreatePath, QueryPath: operation.QueryPath, CancelPath: operation.CancelPath, CancelMethod: operation.CancelMethod, RequestTemplate: operation.RequestTemplate, ResultField: operation.ResultField, StatusField: operation.StatusField}
+	}
+	operation := selected.AdvancedConfig.OperationConfigs["video"]
+	advanced := selected.AdvancedConfig
+	if advanced.CreatePath != "" {
+		operation.CreatePath = advanced.CreatePath
+	}
+	if advanced.ImageToVideoPath != "" && mode != VideoModeText {
+		operation.CreatePath = advanced.ImageToVideoPath
+	}
+	if advanced.QueryPath != "" {
+		operation.QueryPath = advanced.QueryPath
+	}
+	if advanced.CancelPath != "" {
+		operation.CancelPath = advanced.CancelPath
+	}
+	if advanced.CancelMethod != "" {
+		operation.CancelMethod = advanced.CancelMethod
+	}
+	if advanced.RequestTemplate != "" {
+		operation.RequestTemplate = advanced.RequestTemplate
+	}
+	if advanced.ResultField != "" {
+		operation.ResultField = advanced.ResultField
+	}
+	if advanced.StatusField != "" {
+		operation.StatusField = advanced.StatusField
+	}
+	return operation
+}
+
+func (provider *MiniMaxH3VideoProvider) cancelConfiguredVideo(ctx context.Context, task Task, selected modelchannels.ResolvedModel, operation modelchannels.OperationConfig) error {
+	if operation.CancelPath == "" || task.UpstreamTaskID == "" {
+		return ErrProviderUnavailable
+	}
+	path := replaceTaskPath(operation.CancelPath, selected.UpstreamModel, task.UpstreamTaskID)
+	method := strings.ToUpper(operation.CancelMethod)
+	if method == "" {
+		method = http.MethodPost
+	}
+	request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(selected.BaseURL, "/")+"/"+strings.TrimLeft(path, "/"), nil)
+	if err != nil {
+		return err
+	}
+	applyProviderAuth(request, selected)
+	response, err := provider.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if (response.StatusCode >= 200 && response.StatusCode < 300) || response.StatusCode == http.StatusNotFound || response.StatusCode == http.StatusGone {
+		return nil
+	}
+	status := response.StatusCode
+	return &ExecutionError{Err: fmt.Errorf("video cancel returned status %d", status), Path: path, HTTPStatus: &status}
+}
+
 func replaceTaskPath(path, model, taskID string) string {
 	path = strings.ReplaceAll(path, ":model", url.PathEscape(model))
+	path = strings.ReplaceAll(path, ":task_path", escapePathSegments(taskID))
 	path = strings.ReplaceAll(path, ":task_id", url.PathEscape(taskID))
 	return path
+}
+
+func escapePathSegments(value string) string {
+	parts := strings.Split(strings.Trim(value, "/"), "/")
+	for index := range parts {
+		parts[index] = url.PathEscape(parts[index])
+	}
+	return strings.Join(parts, "/")
+}
+
+func configuredVideoRequest(task Task, selected modelchannels.ResolvedModel, references []*ReferenceImage, operation modelchannels.OperationConfig, values map[string]interface{}) (io.Reader, string, error) {
+	if selected.Protocol == "gemini" {
+		instance := map[string]interface{}{"prompt": task.Prompt}
+		parameters := map[string]interface{}{"aspectRatio": task.Size, "durationSeconds": task.DurationSeconds, "resolution": task.Quality}
+		for _, reference := range references {
+			if reference.Kind == "image" || strings.HasPrefix(reference.MimeType, "image/") {
+				image := map[string]string{"bytesBase64Encoded": base64.StdEncoding.EncodeToString(reference.Content), "mimeType": reference.MimeType}
+				if reference.Role == VideoRoleLastFrame {
+					parameters["lastFrame"] = image
+				} else if _, exists := instance["image"]; !exists {
+					instance["image"] = image
+				}
+			}
+		}
+		payload, err := json.Marshal(map[string]interface{}{"instances": []interface{}{instance}, "parameters": parameters})
+		return bytes.NewReader(payload), "application/json", err
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(operation.RequestTemplate)), "multipart/form-data") {
+		body := &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		for key, value := range map[string]string{"model": selected.UpstreamModel, "prompt": task.Prompt, "seconds": strconv.Itoa(task.DurationSeconds), "size": task.Size} {
+			if value != "" {
+				if err := writer.WriteField(key, value); err != nil {
+					return nil, "", err
+				}
+			}
+		}
+		if len(references) > 0 {
+			reference := references[0]
+			part, err := writer.CreateFormFile("input_reference", reference.Name)
+			if err != nil {
+				return nil, "", err
+			}
+			if _, err := part.Write(reference.Content); err != nil {
+				return nil, "", err
+			}
+		}
+		if err := writer.Close(); err != nil {
+			return nil, "", err
+		}
+		return body, writer.FormDataContentType(), nil
+	}
+	payload, err := configuredVideoPayload(operation.RequestTemplate, values)
+	return bytes.NewReader(payload), "application/json", err
 }
 
 func configuredVideoPayload(template string, values map[string]interface{}) ([]byte, error) {
@@ -403,25 +536,63 @@ func firstJSONText(value interface{}, paths ...string) string {
 	}
 	return ""
 }
+
+func configuredResultText(value interface{}, field string) string {
+	for _, candidate := range strings.Split(field, " / ") {
+		if text := jsonText(value, strings.TrimSpace(candidate)); text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
 func jsonText(value interface{}, path string) string {
 	current := value
 	for _, part := range strings.Split(path, ".") {
+		name, index, hasIndex := strings.Cut(part, "[")
 		object, ok := current.(map[string]interface{})
 		if !ok {
 			return ""
 		}
-		current = object[part]
+		current = object[name]
+		if hasIndex {
+			positionText := strings.TrimSuffix(index, "]")
+			position, err := strconv.Atoi(positionText)
+			array, arrayOK := current.([]interface{})
+			if err != nil || !arrayOK || position < 0 || position >= len(array) {
+				return ""
+			}
+			current = array[position]
+		}
 	}
-	text, _ := current.(string)
-	return text
+	switch typed := current.(type) {
+	case string:
+		return typed
+	case bool:
+		return strconv.FormatBool(typed)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	default:
+		return ""
+	}
 }
 
 func (provider *MiniMaxH3VideoProvider) download(ctx context.Context, rawURL string, selected modelchannels.ResolvedModel) (GeneratedVideo, error) {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+	if err != nil {
+		return GeneratedVideo{}, errors.New("video provider returned invalid content url")
+	}
+	base, baseErr := url.Parse(selected.BaseURL)
+	if !parsed.IsAbs() && baseErr == nil {
+		parsed = base.ResolveReference(parsed)
+	}
+	if parsed.Host == "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost"))) {
 		return GeneratedVideo{}, errors.New("video provider returned invalid content url")
 	}
 	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if baseErr == nil && parsed.Host == base.Host {
+		applyProviderAuth(request, selected)
+	}
 	response, err := provider.client.Do(request)
 	if err != nil {
 		return GeneratedVideo{}, err
